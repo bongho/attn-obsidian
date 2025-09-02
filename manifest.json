@@ -4,8 +4,8 @@
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
   "description": "Convert M4A audio files to organized meeting notes using OpenAI Whisper and GPT",
-  "author": "Your Name",
-  "authorUrl": "https://github.com/yourusername/attn-obsidian",
-  "fundingUrl": "https://github.com/yourusername/attn-obsidian",
+  "author": "BongHo Lee",
+  "authorUrl": "https://github.com/bongho/ATTN",
+  "fundingUrl": "https://github.com/bongho/ATTN",
   "isDesktopOnly": false
 }

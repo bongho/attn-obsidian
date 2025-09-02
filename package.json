@@ -9,7 +9,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "setup": "node scripts/setup-config.js",
+    "setup:config": "node scripts/setup-config.js"
   },
   "keywords": [
     "obsidian",

@@ -1,0 +1,17 @@
+{
+  "openai": {
+    "apiKey": "sk-your-openai-api-key-here",
+    "model": {
+      "whisper": "whisper-1",
+      "chat": "gpt-4"
+    },
+    "settings": {
+      "temperature": 0.3,
+      "language": "ko"
+    }
+  },
+  "plugin": {
+    "version": "2.0.0",
+    "debug": false
+  }
+}

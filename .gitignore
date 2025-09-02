@@ -13,6 +13,12 @@ coverage/
 .env
 .env.local
 
+# API Configuration files
+config.json
+api-keys.json
+openai-config.json
+.secrets/
+
 # IDE
 .vscode/
 .idea/

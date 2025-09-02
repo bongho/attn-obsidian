@@ -4,6 +4,7 @@ import { ATTNSettingTab } from './settings';
 import { ApiService } from './apiService';
 import { NoteCreator } from './noteCreator';
 import { TemplateProcessor } from './templateProcessor';
+import { ConfigLoader } from './configLoader';
 
 const DEFAULT_SETTINGS: ATTNSettings = {
   openaiApiKey: '',
@@ -14,8 +15,10 @@ const DEFAULT_SETTINGS: ATTNSettings = {
 
 export default class ATTNPlugin extends Plugin {
   settings: ATTNSettings;
+  private configLoader: ConfigLoader;
 
   async onload() {
+    this.configLoader = ConfigLoader.getInstance();
     await this.loadSettings();
 
     this.addSettingTab(new ATTNSettingTab(this.app, this));
@@ -50,11 +53,19 @@ export default class ATTNPlugin extends Plugin {
 
   async processAudioFile(file: TFile) {
     try {
-      // Check if API key is configured
-      if (!this.settings.openaiApiKey || this.settings.openaiApiKey.trim() === '') {
-        new Notice('OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.');
-        console.error('API 키가 설정되지 않았습니다.');
+      // Check if API key is configured (from config file or settings)
+      const configApiKey = this.configLoader.getOpenAIApiKey();
+      const finalApiKey = configApiKey || this.settings.openaiApiKey;
+      
+      if (!finalApiKey || finalApiKey.trim() === '') {
+        new Notice('OpenAI API 키가 설정되지 않았습니다. config.json 파일을 생성하거나 설정에서 API 키를 입력해주세요.');
+        console.error('API 키가 설정되지 않았습니다. config.json 파일을 생성하거나 설정에서 API 키를 입력해주세요.');
         return;
+      }
+
+      if (this.configLoader.isDebugMode()) {
+        console.log('🔧 ATTN Debug: Processing audio file:', file.name);
+        console.log('🔧 ATTN Debug: Config file path:', this.configLoader.getConfigPath());
       }
 
       // Show progress notice
@@ -64,7 +75,7 @@ export default class ATTNPlugin extends Plugin {
       const audioData = await this.app.vault.readBinary(file);
       const audioFile = new File([audioData], file.name, { type: 'audio/m4a' });
 
-      const apiService = new ApiService(this.settings.openaiApiKey);
+      const apiService = new ApiService(finalApiKey);
       const summary = await apiService.processAudioFile(audioFile);
 
       // Step 2: Prepare template data

@@ -1,17 +1,29 @@
 import OpenAI from 'openai';
+import { ConfigLoader } from './configLoader';
 
 export class ApiService {
   private openai: OpenAI;
+  private config: ConfigLoader;
 
-  constructor(apiKey: string) {
-    if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
-      throw new Error('API 키가 필요합니다.');
+  constructor(apiKey?: string) {
+    this.config = ConfigLoader.getInstance();
+    
+    // Try to get API key from config file first, then fallback to parameter
+    const configApiKey = this.config.getOpenAIApiKey();
+    const finalApiKey = configApiKey || apiKey;
+
+    if (!finalApiKey || typeof finalApiKey !== 'string' || finalApiKey.trim() === '') {
+      throw new Error('API 키가 필요합니다. config.json 파일을 생성하거나 설정에서 API 키를 입력해주세요.');
     }
 
     this.openai = new OpenAI({
-      apiKey: apiKey,
+      apiKey: finalApiKey,
       dangerouslyAllowBrowser: true,
     });
+
+    if (this.config.isDebugMode()) {
+      console.log('🔧 ATTN Debug: ApiService initialized with config file');
+    }
   }
 
   async processAudioFile(audioFile: File): Promise<string> {
@@ -51,11 +63,18 @@ export class ApiService {
 
   private async transcribeAudio(audioFile: File): Promise<string> {
     try {
+      const whisperModel = this.config.getWhisperModel();
+      const openaiSettings = this.config.getOpenAISettings();
+
       const response = await this.openai.audio.transcriptions.create({
         file: audioFile,
-        model: 'whisper-1',
-        language: 'ko',
+        model: whisperModel,
+        language: openaiSettings?.language || 'ko',
       });
+
+      if (this.config.isDebugMode()) {
+        console.log(`🔧 ATTN Debug: Transcription completed using ${whisperModel}`);
+      }
 
       return response.text;
     } catch (error) {
@@ -68,8 +87,12 @@ export class ApiService {
 
   private async summarizeText(text: string): Promise<string> {
     try {
+      const openaiSettings = this.config.getOpenAISettings();
+      const model = openaiSettings?.model || 'gpt-4';
+      const temperature = openaiSettings?.temperature || 0.3;
+
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4',
+        model: model,
         messages: [
           {
             role: 'system',
@@ -80,8 +103,12 @@ export class ApiService {
             content: `다음 회의 내용을 정리해주세요:\n\n${text}`,
           },
         ],
-        temperature: 0.3,
+        temperature: temperature,
       });
+
+      if (this.config.isDebugMode()) {
+        console.log(`🔧 ATTN Debug: Summary completed using ${model} (temp: ${temperature})`);
+      }
 
       return response.choices[0]?.message?.content || '';
     } catch (error) {
