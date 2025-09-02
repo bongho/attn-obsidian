@@ -43,7 +43,7 @@ export class ATTNSettingTab extends PluginSettingTab {
       .setName('Note Filename Template')
       .setDesc('Template for generated note filenames. Available placeholders: {{filename}}, {{date:format}}, {{time:format}}')
       .addText(text => text
-        .setPlaceholder('{{filename}}-회의록-{{date:YYYY-MM-DD}}')
+        .setPlaceholder('{{date:YYYY-MM-DD}}-{{filename}}-회의록')
         .setValue(this.plugin.settings.noteFilenameTemplate)
         .onChange(async (value) => {
           this.plugin.settings.noteFilenameTemplate = value;
@@ -58,6 +58,19 @@ export class ATTNSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.noteContentTemplate)
         .onChange(async (value) => {
           this.plugin.settings.noteContentTemplate = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Audio Speed Multiplier')
+      .setDesc('Speed up audio processing to reduce input tokens. Higher speeds may affect transcription accuracy.')
+      .addDropdown(dropdown => dropdown
+        .addOption('1', '1x (Original Speed)')
+        .addOption('2', '2x (Double Speed)')
+        .addOption('3', '3x (Triple Speed)')
+        .setValue(this.plugin.settings.audioSpeedMultiplier.toString())
+        .onChange(async (value) => {
+          this.plugin.settings.audioSpeedMultiplier = parseInt(value) as 1 | 2 | 3;
           await this.plugin.saveSettings();
         }));
   }

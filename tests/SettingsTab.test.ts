@@ -16,6 +16,7 @@ jest.mock('obsidian', () => ({
   Setting: jest.fn().mockImplementation(function(containerEl) {
     let name = '';
     let textComponent: any = null;
+    let dropdownComponent: any = null;
     
     this.setName = jest.fn((n: string) => {
       name = n;
@@ -44,8 +45,19 @@ jest.mock('obsidian', () => ({
       return this;
     });
     
+    this.addDropdown = jest.fn((callback: Function) => {
+      dropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      callback(dropdownComponent);
+      return this;
+    });
+    
     this.getName = () => name;
     this.getTextComponent = () => textComponent;
+    this.getDropdownComponent = () => dropdownComponent;
   }),
   Notice: jest.fn(),
   TFile: jest.fn(),
@@ -71,8 +83,9 @@ describe('ATTNSettingTab', () => {
       settings: { 
         openaiApiKey: '',
         saveFolderPath: '/',
-        noteFilenameTemplate: '{{filename}}-회의록-{{date:YYYY-MM-DD}}',
-        noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}'
+        noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
+        noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+        audioSpeedMultiplier: 1
       },
       saveSettings: jest.fn().mockResolvedValue(undefined),
     };
@@ -280,6 +293,55 @@ describe('ATTNSettingTab', () => {
       await onChangeCallback(newTemplate);
       
       expect(mockPlugin.settings.noteContentTemplate).toBe(newTemplate);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should render Audio Speed Multiplier dropdown field', () => {
+      const { Setting } = require('obsidian');
+      
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const speedSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Audio Speed Multiplier')
+      );
+      
+      expect(speedSetting).toBeDefined();
+      expect(speedSetting.setName).toHaveBeenCalledWith('Audio Speed Multiplier');
+      expect(speedSetting.setDesc).toHaveBeenCalled();
+      expect(speedSetting.addDropdown).toHaveBeenCalled();
+    });
+
+    test('should configure dropdown with correct options and save changes', async () => {
+      const { Setting } = require('obsidian');
+      
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const speedSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Audio Speed Multiplier')
+      );
+      
+      const dropdownCallback = speedSetting.addDropdown.mock.calls[0][0];
+      const mockDropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      dropdownCallback(mockDropdownComponent);
+      
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('1', '1x (Original Speed)');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('2', '2x (Double Speed)');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('3', '3x (Triple Speed)');
+      expect(mockDropdownComponent.setValue).toHaveBeenCalledWith('1');
+      expect(mockDropdownComponent.onChange).toHaveBeenCalled();
+
+      // Test onChange callback
+      const onChangeCallback = mockDropdownComponent.onChange.mock.calls[0][0];
+      await onChangeCallback('2');
+      
+      expect(mockPlugin.settings.audioSpeedMultiplier).toBe(2);
       expect(mockPlugin.saveSettings).toHaveBeenCalled();
     });
   });

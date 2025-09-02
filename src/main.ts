@@ -1,16 +1,18 @@
 import { App, Plugin, PluginSettingTab, TFile, Notice } from 'obsidian';
-import { ATTNSettings } from './types';
+import { ATTNSettings, AudioSpeedOption } from './types';
 import { ATTNSettingTab } from './settings';
 import { ApiService } from './apiService';
 import { NoteCreator } from './noteCreator';
 import { TemplateProcessor } from './templateProcessor';
 import { ConfigLoader } from './configLoader';
+import { AudioProcessor } from './audioProcessor';
 
 const DEFAULT_SETTINGS: ATTNSettings = {
   openaiApiKey: '',
   saveFolderPath: '/',
-  noteFilenameTemplate: '{{filename}}-회의록-{{date:YYYY-MM-DD}}',
-  noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}'
+  noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
+  noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+  audioSpeedMultiplier: 1
 };
 
 export default class ATTNPlugin extends Plugin {
@@ -71,10 +73,35 @@ export default class ATTNPlugin extends Plugin {
       // Show progress notice
       const processingNotice = new Notice('오디오 파일을 처리하고 있습니다...', 0);
 
-      // Step 1: Read and process audio file with API service
+      // Step 1: Read audio file
       const audioData = await this.app.vault.readBinary(file);
-      const audioFile = new File([audioData], file.name, { type: 'audio/m4a' });
+      let audioFile = new File([audioData], file.name, { type: 'audio/m4a' });
 
+      // Step 2: Process audio speed if necessary
+      if (this.settings.audioSpeedMultiplier > 1) {
+        try {
+          processingNotice.setMessage(`오디오 속도 처리 중... (${this.settings.audioSpeedMultiplier}배속)`);
+          const audioProcessor = new AudioProcessor();
+          
+          // Check if ffmpeg is available
+          const ffmpegAvailable = await audioProcessor.checkFFmpegAvailability();
+          if (!ffmpegAvailable) {
+            new Notice('⚠️ FFmpeg가 설치되지 않았습니다. 원본 속도로 처리합니다.');
+            console.warn('FFmpeg not available, processing at original speed');
+          } else {
+            audioFile = await audioProcessor.processAudioSpeed(audioFile, this.settings.audioSpeedMultiplier as AudioSpeedOption);
+            if (this.configLoader.isDebugMode()) {
+              console.log(`🔧 ATTN Debug: Audio processed at ${this.settings.audioSpeedMultiplier}x speed`);
+            }
+          }
+        } catch (error) {
+          console.warn('Audio speed processing failed, using original file:', error);
+          new Notice('⚠️ 오디오 속도 처리 실패, 원본으로 진행합니다.');
+        }
+      }
+
+      // Step 3: Process with API service
+      processingNotice.setMessage('음성 인식 및 요약 생성 중...');
       const apiService = new ApiService(finalApiKey);
       const result = await apiService.processAudioFile(audioFile);
 

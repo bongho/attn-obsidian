@@ -128,7 +128,8 @@ describe('ATTNPlugin Integration', () => {
       openaiApiKey: 'test-key',
       saveFolderPath: 'Notes/Meetings',
       noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
-      noteContentTemplate: '# Meeting\n\n{{summary}}'
+      noteContentTemplate: '# Meeting\n\n{{summary}}',
+      audioSpeedMultiplier: 1
     });
     plugin.saveData = jest.fn().mockResolvedValue(undefined);
   });
@@ -157,7 +158,8 @@ describe('ATTNPlugin Integration', () => {
         openaiApiKey: 'test-key',
         saveFolderPath: 'Notes/Meetings',
         noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
-        noteContentTemplate: '# Meeting\n\n{{summary}}'
+        noteContentTemplate: '# Meeting\n\n{{summary}}',
+        audioSpeedMultiplier: 1
       });
     });
   });
@@ -474,8 +476,9 @@ describe('ATTNPlugin Integration', () => {
       expect(plugin.settings).toEqual({ 
         openaiApiKey: '',
         saveFolderPath: '/',
-        noteFilenameTemplate: '{{filename}}-회의록-{{date:YYYY-MM-DD}}',
-        noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}'
+        noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
+        noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+        audioSpeedMultiplier: 1
       });
     });
 
@@ -487,8 +490,9 @@ describe('ATTNPlugin Integration', () => {
       expect(plugin.settings).toEqual({ 
         openaiApiKey: 'existing-key',
         saveFolderPath: '/',
-        noteFilenameTemplate: '{{filename}}-회의록-{{date:YYYY-MM-DD}}',
-        noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}'
+        noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
+        noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+        audioSpeedMultiplier: 1
       });
     });
   });

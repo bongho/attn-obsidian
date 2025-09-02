@@ -84,15 +84,28 @@ npm run build
    - [OpenAI Platform](https://platform.openai.com/api-keys)에서 API 키 생성
    - 결제 방법 등록 필요 (사용량 기반 과금)
 
-2. **플러그인 설정**
+2. **FFmpeg 설치** (오디오 속도 조절용, 선택사항)
+   ```bash
+   # macOS (Homebrew)
+   brew install ffmpeg
+   
+   # Windows (Chocolatey)
+   choco install ffmpeg
+   
+   # Ubuntu/Debian
+   sudo apt install ffmpeg
+   ```
+
+3. **플러그인 설정**
    ```
    Obsidian 설정 → Community Plugins → Audio To Tidied Notes
    
    📝 기본 설정:
    - OpenAI API Key: sk-... (필수)
    - 저장 폴더 경로: / (루트)
-   - 파일명 템플릿: {{filename}}-회의록-{{date:YYYY-MM-DD}}
+   - 파일명 템플릿: {{date:YYYY-MM-DD}}-{{filename}}-회의록
    - 내용 템플릿: (기본 회의록 형식)
+   - 오디오 속도 배수: 1x (기본) / 2x / 3x
    ```
 
 ## 🚀 사용 방법
@@ -100,7 +113,7 @@ npm run build
 ### 기본 사용법
 1. **M4A 파일**을 Obsidian 볼트에 추가
 2. 파일 탐색기에서 **우클릭**
-3. **"ATTN: 노트 생성하기"** 선택
+3. **"ATTN: 요약 노트 생성하기"** 선택
 4. 처리 완료까지 대기 (진행률 알림 표시)
 5. 자동 생성된 체계적인 회의록 확인! 🎉
 
