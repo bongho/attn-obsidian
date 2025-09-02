@@ -1,6 +1,11 @@
 import OpenAI from 'openai';
 import { ConfigLoader } from './configLoader';
 
+export interface ProcessAudioResult {
+  transcript: string;
+  summary: string;
+}
+
 export class ApiService {
   private openai: OpenAI;
   private config: ConfigLoader;
@@ -26,7 +31,7 @@ export class ApiService {
     }
   }
 
-  async processAudioFile(audioFile: File): Promise<string> {
+  async processAudioFile(audioFile: File): Promise<ProcessAudioResult> {
     try {
       // Step 1: Transcribe audio using Whisper
       const transcription = await this.transcribeAudio(audioFile);
@@ -42,7 +47,10 @@ export class ApiService {
         throw new Error('요약 결과가 비어있습니다.');
       }
 
-      return summary;
+      return {
+        transcript: transcription,
+        summary: summary
+      };
     } catch (error) {
       if (error instanceof Error) {
         // Re-throw our custom errors as-is

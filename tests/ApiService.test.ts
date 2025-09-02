@@ -88,10 +88,13 @@ describe('ApiService', () => {
       });
     });
 
-    test('should return summarized text', async () => {
+    test('should return both transcript and summary in object format', async () => {
       const result = await apiService.processAudioFile(mockAudioFile);
 
-      expect(result).toBe(mockSummaryText);
+      expect(result).toEqual({
+        transcript: mockTranscriptionText,
+        summary: mockSummaryText
+      });
     });
 
     test('should handle Whisper API errors', async () => {

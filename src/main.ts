@@ -28,7 +28,7 @@ export default class ATTNPlugin extends Plugin {
         if (file instanceof TFile && file.extension === 'm4a') {
           menu.addItem((item) => {
             item
-              .setTitle('ATTN: 노트 생성하기')
+              .setTitle('ATTN: 요약 노트 생성하기')
               .setIcon('document')
               .onClick(async () => {
                 await this.processAudioFile(file);
@@ -76,13 +76,13 @@ export default class ATTNPlugin extends Plugin {
       const audioFile = new File([audioData], file.name, { type: 'audio/m4a' });
 
       const apiService = new ApiService(finalApiKey);
-      const summary = await apiService.processAudioFile(audioFile);
+      const result = await apiService.processAudioFile(audioFile);
 
       // Step 2: Prepare template data
       const templateData = {
         filename: file.name,
-        summary: summary,
-        // transcript: transcript, // TODO: ApiService should return both summary and transcript
+        transcript: result.transcript,
+        summary: result.summary,
       };
 
       // Step 3: Process templates using TemplateProcessor

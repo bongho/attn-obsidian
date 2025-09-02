@@ -5,11 +5,13 @@ jest.mock('openai', () => jest.fn());
 jest.mock('../src/apiService');
 jest.mock('../src/noteCreator');
 jest.mock('../src/templateProcessor');
+jest.mock('../src/configLoader');
 
 import ATTNPlugin from '../src/main';
 import { ApiService } from '../src/apiService';
 import { NoteCreator } from '../src/noteCreator';
 import { TemplateProcessor } from '../src/templateProcessor';
+import { ConfigLoader } from '../src/configLoader';
 
 // Mock Obsidian classes
 class MockWorkspace {
@@ -86,6 +88,7 @@ describe('ATTNPlugin Integration', () => {
   let mockApiService: jest.Mocked<ApiService>;
   let mockNoteCreator: jest.Mocked<NoteCreator>;
   let mockTemplateProcessor: jest.Mocked<TemplateProcessor>;
+  let mockConfigLoader: jest.Mocked<ConfigLoader>;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -106,9 +109,17 @@ describe('ATTNPlugin Integration', () => {
       process: jest.fn(),
     } as any;
     
+    mockConfigLoader = {
+      getInstance: jest.fn().mockReturnThis(),
+      getOpenAIApiKey: jest.fn().mockReturnValue(null),
+      isDebugMode: jest.fn().mockReturnValue(false),
+      getConfigPath: jest.fn().mockReturnValue(''),
+    } as any;
+    
     (ApiService as jest.MockedClass<typeof ApiService>).mockImplementation(() => mockApiService);
     (NoteCreator as jest.MockedClass<typeof NoteCreator>).mockImplementation(() => mockNoteCreator);
     (TemplateProcessor as jest.MockedClass<typeof TemplateProcessor>).mockImplementation(() => mockTemplateProcessor);
+    (ConfigLoader.getInstance as jest.MockedFunction<typeof ConfigLoader.getInstance>).mockReturnValue(mockConfigLoader);
 
     // Mock plugin methods
     plugin.addSettingTab = jest.fn();
@@ -172,7 +183,7 @@ describe('ATTNPlugin Integration', () => {
 
       const items = mockMenu.getItems();
       expect(items).toHaveLength(1);
-      expect(items[0].title).toBe('ATTN: 노트 생성하기');
+      expect(items[0].title).toBe('ATTN: 요약 노트 생성하기');
       expect(items[0].icon).toBe('document');
     });
 
@@ -230,7 +241,7 @@ describe('ATTNPlugin Integration', () => {
       fileMenuHandler(mockMenu as any, m4aFile as any);
       
       // Click the menu item
-      await mockMenu.clickItem('ATTN: 노트 생성하기');
+      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
       
       // Wait for async operations
       await new Promise(resolve => setTimeout(resolve, 0));
@@ -254,7 +265,7 @@ describe('ATTNPlugin Integration', () => {
       mockApp.vault.readBinary = jest.fn().mockResolvedValue(new ArrayBuffer(2048));
 
       fileMenuHandler(mockMenu as any, m4aFile as any);
-      await mockMenu.clickItem('ATTN: 노트 생성하기');
+      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
       await new Promise(resolve => setTimeout(resolve, 0));
 
       // Verify template processor was called with correct templates and data
@@ -285,7 +296,7 @@ describe('ATTNPlugin Integration', () => {
       mockTemplateProcessor.process.mockReturnValueOnce('test-file.md');
 
       fileMenuHandler(mockMenu as any, m4aFile as any);
-      await mockMenu.clickItem('ATTN: 노트 생성하기');
+      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
       await new Promise(resolve => setTimeout(resolve, 0));
 
       expect(mockNoteCreator.createNote).toHaveBeenCalledWith(
@@ -306,7 +317,7 @@ describe('ATTNPlugin Integration', () => {
       // Mock console.error to capture error messages
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
       
-      await mockMenu.clickItem('ATTN: 노트 생성하기');
+      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
       await new Promise(resolve => setTimeout(resolve, 0));
 
       expect(consoleSpy).toHaveBeenCalledWith(
@@ -327,7 +338,7 @@ describe('ATTNPlugin Integration', () => {
       
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
       
-      await mockMenu.clickItem('ATTN: 노트 생성하기');
+      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
       await new Promise(resolve => setTimeout(resolve, 0));
 
       expect(consoleSpy).toHaveBeenCalledWith(
@@ -340,7 +351,7 @@ describe('ATTNPlugin Integration', () => {
 
     test('should handle note creation errors', async () => {
       const noteError = new Error('Note creation failed');
-      mockNoteCreator.createNoteFromSummary.mockRejectedValue(noteError);
+      mockNoteCreator.createNote.mockRejectedValue(noteError);
       
       const mockMenu = new MockMenu();
       const m4aFile = new MockTFile('meeting.m4a', 'm4a');
@@ -349,7 +360,7 @@ describe('ATTNPlugin Integration', () => {
       
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
       
-      await mockMenu.clickItem('ATTN: 노트 생성하기');
+      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
       await new Promise(resolve => setTimeout(resolve, 0));
 
       expect(mockApiService.processAudioFile).toHaveBeenCalled();
@@ -359,6 +370,90 @@ describe('ATTNPlugin Integration', () => {
       );
       
       consoleSpy.mockRestore();
+    });
+
+    test('should support both transcript and summary placeholders in note template', async () => {
+      // Clear previous mocks and set up fresh state
+      jest.clearAllMocks();
+      
+      // Set plugin settings with API key
+      plugin.settings = {
+        openaiApiKey: 'test-key',
+        saveFolderPath: 'Notes/Meetings',
+        noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
+        noteContentTemplate: '원문: {{transcript}}\n\n요약: {{summary}}'
+      };
+      
+      await plugin.onload();
+      
+      // Mock ApiService to return both transcript and summary
+      const mockResult = {
+        transcript: '전체 STT 원문입니다.',
+        summary: '요약된 내용입니다.'
+      };
+      mockApiService.processAudioFile.mockResolvedValue(mockResult);
+      
+      // Mock template processor to return the final content
+      mockTemplateProcessor.process
+        .mockReturnValueOnce('meeting-2025-09-02.md') // filename
+        .mockReturnValueOnce('원문: 전체 STT 원문입니다.\n\n요약: 요약된 내용입니다.'); // content
+      
+      // Get the fresh file-menu handler
+      const workspaceOnCall = mockApp.workspace.on.mock.calls.find(
+        call => call[0] === 'file-menu'
+      );
+      const freshFileMenuHandler = workspaceOnCall![1];
+      
+      const mockMenu = new MockMenu();
+      const m4aFile = new MockTFile('meeting.m4a', 'm4a');
+      
+      mockApp.vault.readBinary = jest.fn().mockResolvedValue(new ArrayBuffer(1024));
+
+      freshFileMenuHandler(mockMenu as any, m4aFile as any);
+      
+      // Add console spy to catch errors
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+      
+      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
+      // Check if there were any errors
+      if (consoleSpy.mock.calls.length > 0) {
+        console.log('Console errors:', consoleSpy.mock.calls);
+      }
+      
+      consoleSpy.mockRestore();
+      
+      // Debug: Check what actually got called
+      console.log('ApiService.processAudioFile calls:', mockApiService.processAudioFile.mock.calls);
+      console.log('TemplateProcessor.process calls:', mockTemplateProcessor.process.mock.calls);
+      console.log('NoteCreator.createNote calls:', mockNoteCreator.createNote.mock.calls);
+
+      // Verify the basic flow worked
+      expect(mockApiService.processAudioFile).toHaveBeenCalled();
+      expect(mockTemplateProcessor.process).toHaveBeenCalledTimes(2);
+      expect(mockNoteCreator.createNote).toHaveBeenCalled();
+
+      // Verify template processor was called with both transcript and summary data
+      expect(mockTemplateProcessor.process).toHaveBeenNthCalledWith(
+        2, // content template call
+        '원문: {{transcript}}\n\n요약: {{summary}}',
+        expect.objectContaining({
+          filename: 'meeting.m4a',
+          transcript: '전체 STT 원문입니다.',
+          summary: '요약된 내용입니다.'
+        })
+      );
+
+      // Verify the final note content contains both transcript and summary
+      expect(mockNoteCreator.createNote).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('전체 STT 원문입니다.')
+      );
+      expect(mockNoteCreator.createNote).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('요약된 내용입니다.')
+      );
     });
   });
 
