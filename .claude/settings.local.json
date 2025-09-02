@@ -7,7 +7,8 @@
       "Bash(npm test:*)",
       "Bash(npm run build:*)",
       "Bash(ffmpeg:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []
