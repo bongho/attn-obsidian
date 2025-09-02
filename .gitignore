@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+main.js
+main.js.map
+dist/
+
+# Tests
+coverage/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
