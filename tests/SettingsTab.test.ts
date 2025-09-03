@@ -85,7 +85,8 @@ describe('ATTNSettingTab', () => {
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
-        audioSpeedMultiplier: 1
+        audioSpeedMultiplier: 1,
+        ffmpegPath: ''
       },
       saveSettings: jest.fn().mockResolvedValue(undefined),
     };
@@ -342,6 +343,48 @@ describe('ATTNSettingTab', () => {
       await onChangeCallback('2');
       
       expect(mockPlugin.settings.audioSpeedMultiplier).toBe(2);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should render FFmpeg Path input field', () => {
+      const { Setting } = require('obsidian');
+      
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const ffmpegPathSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'FFmpeg Path (Optional)')
+      );
+      
+      expect(ffmpegPathSetting).toBeDefined();
+      expect(ffmpegPathSetting.setName).toHaveBeenCalledWith('FFmpeg Path (Optional)');
+      expect(ffmpegPathSetting.setDesc).toHaveBeenCalled();
+      expect(ffmpegPathSetting.addText).toHaveBeenCalled();
+    });
+
+    test('should save ffmpeg path when input changes', async () => {
+      const { Setting } = require('obsidian');
+      
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const ffmpegPathSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'FFmpeg Path (Optional)')
+      );
+      
+      const textCallback = ffmpegPathSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      
+      await onChangeCallback('/opt/homebrew/bin/ffmpeg');
+      
+      expect(mockPlugin.settings.ffmpegPath).toBe('/opt/homebrew/bin/ffmpeg');
       expect(mockPlugin.saveSettings).toHaveBeenCalled();
     });
   });

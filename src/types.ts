@@ -4,6 +4,7 @@ export interface ATTNSettings {
   noteFilenameTemplate: string;
   noteContentTemplate: string;
   audioSpeedMultiplier: number;
+  ffmpegPath: string;
 }
 
 export type AudioSpeedOption = 1 | 2 | 3;

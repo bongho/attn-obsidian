@@ -129,7 +129,8 @@ describe('ATTNPlugin Integration', () => {
       saveFolderPath: 'Notes/Meetings',
       noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
       noteContentTemplate: '# Meeting\n\n{{summary}}',
-      audioSpeedMultiplier: 1
+      audioSpeedMultiplier: 1,
+      ffmpegPath: ''
     });
     plugin.saveData = jest.fn().mockResolvedValue(undefined);
   });
@@ -159,7 +160,8 @@ describe('ATTNPlugin Integration', () => {
         saveFolderPath: 'Notes/Meetings',
         noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
         noteContentTemplate: '# Meeting\n\n{{summary}}',
-        audioSpeedMultiplier: 1
+        audioSpeedMultiplier: 1,
+        ffmpegPath: ''
       });
     });
   });
@@ -478,7 +480,8 @@ describe('ATTNPlugin Integration', () => {
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
-        audioSpeedMultiplier: 1
+        audioSpeedMultiplier: 1,
+        ffmpegPath: ''
       });
     });
 
@@ -492,7 +495,8 @@ describe('ATTNPlugin Integration', () => {
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
-        audioSpeedMultiplier: 1
+        audioSpeedMultiplier: 1,
+        ffmpegPath: ''
       });
     });
   });

@@ -73,5 +73,16 @@ export class ATTNSettingTab extends PluginSettingTab {
           this.plugin.settings.audioSpeedMultiplier = parseInt(value) as 1 | 2 | 3;
           await this.plugin.saveSettings();
         }));
+
+    new Setting(containerEl)
+      .setName('FFmpeg Path (Optional)')
+      .setDesc('Specify custom FFmpeg executable path. Leave empty to use system PATH. Required for audio speed processing.')
+      .addText(text => text
+        .setPlaceholder('/opt/homebrew/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe')
+        .setValue(this.plugin.settings.ffmpegPath)
+        .onChange(async (value) => {
+          this.plugin.settings.ffmpegPath = value;
+          await this.plugin.saveSettings();
+        }));
   }
 }

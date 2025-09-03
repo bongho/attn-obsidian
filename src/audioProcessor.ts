@@ -9,9 +9,11 @@ const execAsync = promisify(exec);
 export class AudioProcessor {
   private tempDir: string;
   private ffmpegPath: string | null = null;
+  private userFfmpegPath: string;
 
-  constructor() {
+  constructor(userFfmpegPath: string = '') {
     this.tempDir = join(process.cwd(), '.temp');
+    this.userFfmpegPath = userFfmpegPath;
   }
 
   async processAudioSpeed(audioFile: File, speedMultiplier: AudioSpeedOption): Promise<File> {
@@ -86,6 +88,17 @@ export class AudioProcessor {
   }
 
   private async getFFmpegPath(): Promise<string | null> {
+    // First try user-configured path if provided
+    if (this.userFfmpegPath && this.userFfmpegPath.trim() !== '') {
+      try {
+        await execAsync(`"${this.userFfmpegPath}" -version`);
+        return this.userFfmpegPath;
+      } catch (error) {
+        console.warn(`User-configured ffmpeg path "${this.userFfmpegPath}" is not valid:`, error);
+      }
+    }
+
+    // Fall back to common system paths
     const ffmpegPaths = [
       'ffmpeg', // System PATH
       '/usr/bin/ffmpeg', // Standard Linux/Unix

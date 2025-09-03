@@ -95,6 +95,13 @@ npm run build
    # Ubuntu/Debian
    sudo apt install ffmpeg
    ```
+   
+   **FFmpeg 경로 확인:**
+   ```bash
+   # 설치된 FFmpeg 경로 확인
+   which ffmpeg          # macOS/Linux
+   where ffmpeg          # Windows
+   ```
 
 3. **플러그인 설정**
    ```
@@ -106,6 +113,7 @@ npm run build
    - 파일명 템플릿: {{date:YYYY-MM-DD}}-{{filename}}-회의록
    - 내용 템플릿: (기본 회의록 형식)
    - 오디오 속도 배수: 1x (기본) / 2x / 3x
+   - FFmpeg 경로: (선택사항, 자동 감지 실패시 수동 설정)
    ```
 
 ## 🚀 사용 방법

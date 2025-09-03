@@ -12,7 +12,8 @@ const DEFAULT_SETTINGS: ATTNSettings = {
   saveFolderPath: '/',
   noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
   noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
-  audioSpeedMultiplier: 1
+  audioSpeedMultiplier: 1,
+  ffmpegPath: ''
 };
 
 export default class ATTNPlugin extends Plugin {
@@ -81,13 +82,13 @@ export default class ATTNPlugin extends Plugin {
       if (this.settings.audioSpeedMultiplier > 1) {
         try {
           processingNotice.setMessage(`오디오 속도 처리 중... (${this.settings.audioSpeedMultiplier}배속)`);
-          const audioProcessor = new AudioProcessor();
+          const audioProcessor = new AudioProcessor(this.settings.ffmpegPath);
           
           // Check if ffmpeg is available
           const ffmpegAvailable = await audioProcessor.checkFFmpegAvailability();
           if (!ffmpegAvailable) {
-            new Notice('⚠️ FFmpeg가 설치되지 않았습니다. 원본 속도로 처리합니다.');
-            console.warn('FFmpeg not available, processing at original speed');
+            new Notice('⚠️ FFmpeg를 찾을 수 없습니다. 설정에서 FFmpeg 경로를 확인하거나 원본 속도로 처리합니다.');
+            console.warn('FFmpeg not available at configured path, processing at original speed');
           } else {
             audioFile = await audioProcessor.processAudioSpeed(audioFile, this.settings.audioSpeedMultiplier as AudioSpeedOption);
             if (this.configLoader.isDebugMode()) {

@@ -124,4 +124,58 @@ describe('AudioProcessor', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('custom ffmpeg path', () => {
+    test('should use custom ffmpeg path when provided', async () => {
+      const customPath = '/custom/path/to/ffmpeg';
+      const customAudioProcessor = new AudioProcessor(customPath);
+
+      mockExec.mockImplementation((command, callback) => {
+        if (command.includes(customPath)) {
+          if (callback) {
+            callback(null, 'ffmpeg version 4.4.0', '');
+          }
+        } else {
+          if (callback) {
+            callback(new Error('command not found'), '', 'command not found');
+          }
+        }
+        return {} as any;
+      });
+
+      const result = await customAudioProcessor.checkFFmpegAvailability();
+      
+      expect(result).toBe(true);
+      expect(mockExec).toHaveBeenCalledWith(`"${customPath}" -version`, expect.any(Function));
+    });
+
+    test('should fall back to system paths when custom path fails', async () => {
+      const customPath = '/invalid/path/to/ffmpeg';
+      const customAudioProcessor = new AudioProcessor(customPath);
+
+      mockExec.mockImplementation((command, callback) => {
+        if (command.includes(customPath)) {
+          if (callback) {
+            callback(new Error('file not found'), '', 'file not found');
+          }
+        } else if (command.includes('"ffmpeg"')) {
+          if (callback) {
+            callback(null, 'ffmpeg version 4.4.0', '');
+          }
+        } else {
+          if (callback) {
+            callback(new Error('command not found'), '', 'command not found');
+          }
+        }
+        return {} as any;
+      });
+
+      const result = await customAudioProcessor.checkFFmpegAvailability();
+      
+      expect(result).toBe(true);
+      // Should have tried custom path first, then fallen back to system paths
+      expect(mockExec).toHaveBeenCalledWith(`"${customPath}" -version`, expect.any(Function));
+      expect(mockExec).toHaveBeenCalledWith('"ffmpeg" -version', expect.any(Function));
+    });
+  });
 });
