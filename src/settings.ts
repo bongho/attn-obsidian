@@ -102,10 +102,9 @@ export class ATTNSettingTab extends PluginSettingTab {
             }
           }));
     } else {
-      new Setting(containerEl)
+      const templateSetting = new Setting(containerEl)
         .setName('Note Content Template')
         .setDesc('Template for note content. Available placeholders: {{filename}}, {{summary}}, {{transcript}}, {{date:format}}, {{time:format}}')
-        .setClass('attn-large-textarea attn-template-textarea')
         .addTextArea(text => text
           .setPlaceholder('# 회의록\\n\\n**원본 파일:** {{filename}}\\n**생성 날짜:** {{date:YYYY-MM-DD}}\\n\\n## 요약\\n\\n{{summary}}')
           .setValue(this.plugin.settings.noteContentTemplate)
@@ -113,15 +112,18 @@ export class ATTNSettingTab extends PluginSettingTab {
             this.plugin.settings.noteContentTemplate = value;
             await this.plugin.saveSettings();
           }));
+      
+      // Add CSS classes manually
+      templateSetting.settingEl.addClass('attn-large-textarea');
+      templateSetting.settingEl.addClass('attn-template-textarea');
     }
 
     // AI Configuration Section
     containerEl.createEl('h3', { text: 'AI Configuration' });
 
-    new Setting(containerEl)
+    const promptSetting = new Setting(containerEl)
       .setName('System Prompt')
       .setDesc('Custom system prompt for AI summarization. This controls how the AI interprets and summarizes your content.')
-      .setClass('attn-large-textarea attn-prompt-textarea')
       .addTextArea(text => text
         .setPlaceholder('Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.')
         .setValue(this.plugin.settings.systemPrompt)
@@ -129,6 +131,10 @@ export class ATTNSettingTab extends PluginSettingTab {
           this.plugin.settings.systemPrompt = value;
           await this.plugin.saveSettings();
         }));
+    
+    // Add CSS classes manually
+    promptSetting.settingEl.addClass('attn-large-textarea');
+    promptSetting.settingEl.addClass('attn-prompt-textarea');
 
     // Audio Speed Processing Section
     containerEl.createEl('h3', { text: 'Audio Speed Processing' });
