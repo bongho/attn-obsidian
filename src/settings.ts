@@ -62,6 +62,9 @@ export class ATTNSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    // Audio Speed Processing Section
+    containerEl.createEl('h3', { text: 'Audio Speed Processing' });
+
     new Setting(containerEl)
       .setName('Audio Speed Multiplier')
       .setDesc('Speed up audio processing to reduce input tokens. Higher speeds may affect transcription accuracy.')
@@ -77,7 +80,7 @@ export class ATTNSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('FFmpeg Path (Optional)')
-      .setDesc('Specify custom FFmpeg executable path. Leave empty to use system PATH. Required for audio speed processing.')
+      .setDesc('Specify custom FFmpeg executable path. Leave empty to use system PATH. Required for audio speed processing above 1x.')
       .addText(text => text
         .setPlaceholder('/opt/homebrew/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe')
         .setValue(this.plugin.settings.ffmpegPath)

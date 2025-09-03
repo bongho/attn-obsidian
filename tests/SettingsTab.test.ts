@@ -120,6 +120,7 @@ describe('ATTNSettingTab', () => {
 
       expect(settingTab.containerEl.empty).toHaveBeenCalled();
       expect(settingTab.containerEl.createEl).toHaveBeenCalledWith('h2', { text: 'Audio To Tidied Notes Settings' });
+      expect(settingTab.containerEl.createEl).toHaveBeenCalledWith('h3', { text: 'Audio Speed Processing' });
     });
 
     test('should create a Setting with correct properties', () => {
