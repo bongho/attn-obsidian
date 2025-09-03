@@ -55,7 +55,7 @@ export class ConfigLoader {
     }
 
     if (!this.configPath) {
-      console.warn('⚠️ ATTN: No config file found. Please create config.json from config.example.json');
+      // Config file is optional, so don't show warning unless debug mode is needed
       return null;
     }
 
@@ -104,6 +104,9 @@ export class ConfigLoader {
   }
 
   public getConfigPath(): string {
+    if (!this.configPath) {
+      return 'No config file found (using plugin settings)';
+    }
     return this.configPath;
   }
 }

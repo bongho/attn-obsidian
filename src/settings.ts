@@ -1,6 +1,7 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import { ATTNSettings } from './types';
 import ATTNPlugin from './main';
+import { AudioProcessor } from './audioProcessor';
 
 export class ATTNSettingTab extends PluginSettingTab {
   plugin: ATTNPlugin;
@@ -83,6 +84,26 @@ export class ATTNSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.ffmpegPath = value;
           await this.plugin.saveSettings();
+        }))
+      .addButton(button => button
+        .setButtonText('Test')
+        .setTooltip('Test if FFmpeg is available at this path')
+        .onClick(async () => {
+          const testNotice = new Notice('Testing FFmpeg...', 0);
+          try {
+            const audioProcessor = new AudioProcessor(this.plugin.settings.ffmpegPath);
+            const isAvailable = await audioProcessor.checkFFmpegAvailability();
+            
+            testNotice.hide();
+            if (isAvailable) {
+              new Notice('✅ FFmpeg is working correctly!', 3000);
+            } else {
+              new Notice('❌ FFmpeg not found. Please check the path.', 5000);
+            }
+          } catch (error) {
+            testNotice.hide();
+            new Notice('❌ Error testing FFmpeg: ' + (error instanceof Error ? error.message : 'Unknown error'), 5000);
+          }
         }));
   }
 }

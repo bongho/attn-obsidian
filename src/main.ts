@@ -61,8 +61,8 @@ export default class ATTNPlugin extends Plugin {
       const finalApiKey = configApiKey || this.settings.openaiApiKey;
       
       if (!finalApiKey || finalApiKey.trim() === '') {
-        new Notice('OpenAI API 키가 설정되지 않았습니다. config.json 파일을 생성하거나 설정에서 API 키를 입력해주세요.');
-        console.error('API 키가 설정되지 않았습니다. config.json 파일을 생성하거나 설정에서 API 키를 입력해주세요.');
+        new Notice('OpenAI API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
+        console.error('API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
         return;
       }
 

@@ -17,6 +17,7 @@ jest.mock('obsidian', () => ({
     let name = '';
     let textComponent: any = null;
     let dropdownComponent: any = null;
+    let buttonComponent: any = null;
     
     this.setName = jest.fn((n: string) => {
       name = n;
@@ -55,9 +56,20 @@ jest.mock('obsidian', () => ({
       return this;
     });
     
+    this.addButton = jest.fn((callback: Function) => {
+      buttonComponent = {
+        setButtonText: jest.fn().mockReturnThis(),
+        setTooltip: jest.fn().mockReturnThis(),
+        onClick: jest.fn().mockReturnThis(),
+      };
+      callback(buttonComponent);
+      return this;
+    });
+    
     this.getName = () => name;
     this.getTextComponent = () => textComponent;
     this.getDropdownComponent = () => dropdownComponent;
+    this.getButtonComponent = () => buttonComponent;
   }),
   Notice: jest.fn(),
   TFile: jest.fn(),
@@ -386,6 +398,33 @@ describe('ATTNSettingTab', () => {
       
       expect(mockPlugin.settings.ffmpegPath).toBe('/opt/homebrew/bin/ffmpeg');
       expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should render FFmpeg test button', () => {
+      const { Setting } = require('obsidian');
+      
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const ffmpegPathSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'FFmpeg Path (Optional)')
+      );
+      
+      expect(ffmpegPathSetting).toBeDefined();
+      expect(ffmpegPathSetting.addButton).toHaveBeenCalled();
+      
+      const buttonCallback = ffmpegPathSetting.addButton.mock.calls[0][0];
+      const mockButtonComponent = {
+        setButtonText: jest.fn().mockReturnThis(),
+        setTooltip: jest.fn().mockReturnThis(),
+        onClick: jest.fn().mockReturnThis(),
+      };
+      
+      buttonCallback(mockButtonComponent);
+      
+      expect(mockButtonComponent.setButtonText).toHaveBeenCalledWith('Test');
+      expect(mockButtonComponent.setTooltip).toHaveBeenCalledWith('Test if FFmpeg is available at this path');
+      expect(mockButtonComponent.onClick).toHaveBeenCalled();
     });
   });
 });
