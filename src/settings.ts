@@ -16,6 +16,9 @@ export class ATTNSettingTab extends PluginSettingTab {
     const { containerEl } = this;
 
     containerEl.empty();
+    
+    // Add custom CSS for larger text areas
+    this.addCustomStyles();
 
     containerEl.createEl('h2', { text: 'Audio To Tidied Notes Settings' });
 
@@ -102,6 +105,7 @@ export class ATTNSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName('Note Content Template')
         .setDesc('Template for note content. Available placeholders: {{filename}}, {{summary}}, {{transcript}}, {{date:format}}, {{time:format}}')
+        .setClass('attn-large-textarea attn-template-textarea')
         .addTextArea(text => text
           .setPlaceholder('# 회의록\\n\\n**원본 파일:** {{filename}}\\n**생성 날짜:** {{date:YYYY-MM-DD}}\\n\\n## 요약\\n\\n{{summary}}')
           .setValue(this.plugin.settings.noteContentTemplate)
@@ -117,6 +121,7 @@ export class ATTNSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('System Prompt')
       .setDesc('Custom system prompt for AI summarization. This controls how the AI interprets and summarizes your content.')
+      .setClass('attn-large-textarea attn-prompt-textarea')
       .addTextArea(text => text
         .setPlaceholder('Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.')
         .setValue(this.plugin.settings.systemPrompt)
@@ -171,5 +176,65 @@ export class ATTNSettingTab extends PluginSettingTab {
             new Notice('❌ Error testing FFmpeg: ' + (error instanceof Error ? error.message : 'Unknown error'), 5000);
           }
         }));
+  }
+
+  private addCustomStyles(): void {
+    // Check if styles are already added
+    if (document.getElementById('attn-settings-styles')) {
+      return;
+    }
+
+    const styleEl = document.createElement('style');
+    styleEl.id = 'attn-settings-styles';
+    styleEl.textContent = `
+      .attn-large-textarea .setting-item-control {
+        display: block !important;
+        width: 100% !important;
+        margin-top: 8px !important;
+      }
+      
+      .attn-large-textarea .setting-item-info {
+        margin-bottom: 8px !important;
+      }
+      
+      .attn-large-textarea textarea {
+        width: 100% !important;
+        min-height: 120px !important;
+        resize: vertical !important;
+        padding: 8px !important;
+        border-radius: 4px !important;
+        border: 1px solid var(--background-modifier-border) !important;
+        background: var(--background-primary-alt) !important;
+        color: var(--text-normal) !important;
+        font-family: var(--font-text) !important;
+        font-size: var(--font-size-small) !important;
+        line-height: 1.4 !important;
+      }
+      
+      /* Template-specific styling */
+      .attn-template-textarea textarea {
+        font-family: var(--font-monospace) !important;
+        min-height: 150px !important;
+        font-size: var(--font-size-smaller) !important;
+      }
+      
+      /* System prompt specific styling */
+      .attn-prompt-textarea textarea {
+        min-height: 120px !important;
+      }
+      
+      .attn-large-textarea textarea:focus {
+        border-color: var(--interactive-accent) !important;
+        box-shadow: 0 0 0 2px var(--interactive-accent-hover) !important;
+        outline: none !important;
+      }
+      
+      .attn-large-textarea textarea::placeholder {
+        color: var(--text-muted) !important;
+        opacity: 0.7 !important;
+      }
+    `;
+    
+    document.head.appendChild(styleEl);
   }
 }
