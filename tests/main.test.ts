@@ -129,6 +129,9 @@ describe('ATTNPlugin Integration', () => {
       saveFolderPath: 'Notes/Meetings',
       noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
       noteContentTemplate: '# Meeting\n\n{{summary}}',
+      noteContentTemplateFile: '',
+      useTemplateFile: false,
+      systemPrompt: 'Test prompt',
       audioSpeedMultiplier: 1,
       ffmpegPath: ''
     });
@@ -160,6 +163,9 @@ describe('ATTNPlugin Integration', () => {
         saveFolderPath: 'Notes/Meetings',
         noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
         noteContentTemplate: '# Meeting\n\n{{summary}}',
+        noteContentTemplateFile: '',
+        useTemplateFile: false,
+        systemPrompt: 'Test prompt',
         audioSpeedMultiplier: 1,
         ffmpegPath: ''
       });
@@ -480,6 +486,9 @@ describe('ATTNPlugin Integration', () => {
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+        noteContentTemplateFile: '',
+        useTemplateFile: false,
+        systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.',
         audioSpeedMultiplier: 1,
         ffmpegPath: ''
       });
@@ -495,6 +504,9 @@ describe('ATTNPlugin Integration', () => {
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+        noteContentTemplateFile: '',
+        useTemplateFile: false,
+        systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.',
         audioSpeedMultiplier: 1,
         ffmpegPath: ''
       });

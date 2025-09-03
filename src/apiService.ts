@@ -31,7 +31,7 @@ export class ApiService {
     }
   }
 
-  async processAudioFile(audioFile: File): Promise<ProcessAudioResult> {
+  async processAudioFile(audioFile: File, systemPrompt?: string): Promise<ProcessAudioResult> {
     try {
       // Step 1: Transcribe audio using Whisper
       const transcription = await this.transcribeAudio(audioFile);
@@ -40,8 +40,8 @@ export class ApiService {
         throw new Error('음성 인식 결과가 비어있습니다.');
       }
 
-      // Step 2: Summarize transcription using GPT
-      const summary = await this.summarizeText(transcription);
+      // Step 2: Summarize transcription using GPT with custom system prompt
+      const summary = await this.summarizeText(transcription, systemPrompt);
       
       if (!summary || summary.trim() === '') {
         throw new Error('요약 결과가 비어있습니다.');
@@ -93,18 +93,22 @@ export class ApiService {
     }
   }
 
-  private async summarizeText(text: string): Promise<string> {
+  private async summarizeText(text: string, customSystemPrompt?: string): Promise<string> {
     try {
       const openaiSettings = this.config.getOpenAISettings();
       const model = openaiSettings?.model || 'gpt-4';
       const temperature = openaiSettings?.temperature || 0.3;
+
+      // Use custom system prompt if provided, otherwise use default
+      const systemPrompt = customSystemPrompt || 
+        '당신은 회의록 정리 전문가입니다. 주어진 회의 내용을 체계적으로 정리하여 명확하고 유용한 회의록을 작성해주세요.';
 
       const response = await this.openai.chat.completions.create({
         model: model,
         messages: [
           {
             role: 'system',
-            content: '당신은 회의록 정리 전문가입니다. 주어진 회의 내용을 체계적으로 정리하여 명확하고 유용한 회의록을 작성해주세요.',
+            content: systemPrompt,
           },
           {
             role: 'user',
@@ -116,6 +120,7 @@ export class ApiService {
 
       if (this.config.isDebugMode()) {
         console.log(`🔧 ATTN Debug: Summary completed using ${model} (temp: ${temperature})`);
+        console.log(`🔧 ATTN Debug: System prompt: ${systemPrompt.substring(0, 100)}...`);
       }
 
       return response.choices[0]?.message?.content || '';

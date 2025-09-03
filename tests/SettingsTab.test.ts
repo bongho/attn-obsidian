@@ -18,6 +18,7 @@ jest.mock('obsidian', () => ({
     let textComponent: any = null;
     let dropdownComponent: any = null;
     let buttonComponent: any = null;
+    let toggleComponent: any = null;
     
     this.setName = jest.fn((n: string) => {
       name = n;
@@ -55,6 +56,15 @@ jest.mock('obsidian', () => ({
       callback(dropdownComponent);
       return this;
     });
+
+    this.addToggle = jest.fn((callback: Function) => {
+      toggleComponent = {
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      callback(toggleComponent);
+      return this;
+    });
     
     this.addButton = jest.fn((callback: Function) => {
       buttonComponent = {
@@ -70,6 +80,7 @@ jest.mock('obsidian', () => ({
     this.getTextComponent = () => textComponent;
     this.getDropdownComponent = () => dropdownComponent;
     this.getButtonComponent = () => buttonComponent;
+    this.getToggleComponent = () => toggleComponent;
   }),
   Notice: jest.fn(),
   TFile: jest.fn(),
@@ -97,6 +108,9 @@ describe('ATTNSettingTab', () => {
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+        noteContentTemplateFile: '',
+        useTemplateFile: false,
+        systemPrompt: 'Test prompt',
         audioSpeedMultiplier: 1,
         ffmpegPath: ''
       },

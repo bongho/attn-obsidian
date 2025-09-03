@@ -6,12 +6,16 @@ import { NoteCreator } from './noteCreator';
 import { TemplateProcessor } from './templateProcessor';
 import { ConfigLoader } from './configLoader';
 import { AudioProcessor } from './audioProcessor';
+import { TemplateLoader } from './templateLoader';
 
 const DEFAULT_SETTINGS: ATTNSettings = {
   openaiApiKey: '',
   saveFolderPath: '/',
   noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
   noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+  noteContentTemplateFile: '',
+  useTemplateFile: false,
+  systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.',
   audioSpeedMultiplier: 1,
   ffmpegPath: ''
 };
@@ -104,17 +108,18 @@ export default class ATTNPlugin extends Plugin {
       // Step 3: Process with API service
       processingNotice.setMessage('음성 인식 및 요약 생성 중...');
       const apiService = new ApiService(finalApiKey);
-      const result = await apiService.processAudioFile(audioFile);
+      const result = await apiService.processAudioFile(audioFile, this.settings.systemPrompt);
 
-      // Step 2: Prepare template data
+      // Step 4: Prepare template data
       const templateData = {
         filename: file.name,
         transcript: result.transcript,
         summary: result.summary,
       };
 
-      // Step 3: Process templates using TemplateProcessor
+      // Step 5: Process templates using TemplateProcessor and TemplateLoader
       const templateProcessor = new TemplateProcessor();
+      const templateLoader = new TemplateLoader(this.app.vault);
       
       // Generate filename using template
       const generatedFileName = templateProcessor.process(
@@ -122,9 +127,17 @@ export default class ATTNPlugin extends Plugin {
         templateData
       );
       
+      // Load content template (from file or fallback to inline template)
+      processingNotice.setMessage('템플릿 처리 중...');
+      const contentTemplate = await templateLoader.getTemplateContent(
+        this.settings.useTemplateFile,
+        this.settings.noteContentTemplateFile,
+        this.settings.noteContentTemplate
+      );
+      
       // Generate content using template
       const generatedContent = templateProcessor.process(
-        this.settings.noteContentTemplate,
+        contentTemplate,
         templateData
       );
 

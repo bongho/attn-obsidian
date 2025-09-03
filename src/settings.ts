@@ -2,6 +2,7 @@ import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import { ATTNSettings } from './types';
 import ATTNPlugin from './main';
 import { AudioProcessor } from './audioProcessor';
+import { TemplateLoader } from './templateLoader';
 
 export class ATTNSettingTab extends PluginSettingTab {
   plugin: ATTNPlugin;
@@ -51,14 +52,76 @@ export class ATTNSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    // Template Configuration Section
+    containerEl.createEl('h3', { text: 'Template Configuration' });
+
     new Setting(containerEl)
-      .setName('Note Content Template')
-      .setDesc('Template for note content. Available placeholders: {{filename}}, {{summary}}, {{transcript}}, {{date:format}}, {{time:format}}')
-      .addTextArea(text => text
-        .setPlaceholder('# 회의록\\n\\n**원본 파일:** {{filename}}\\n**생성 날짜:** {{date:YYYY-MM-DD}}\\n\\n## 요약\\n\\n{{summary}}')
-        .setValue(this.plugin.settings.noteContentTemplate)
+      .setName('Use Template File')
+      .setDesc('Use a template file from your vault instead of inline template text')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.useTemplateFile)
         .onChange(async (value) => {
-          this.plugin.settings.noteContentTemplate = value;
+          this.plugin.settings.useTemplateFile = value;
+          await this.plugin.saveSettings();
+          this.display(); // Refresh the display to show/hide relevant fields
+        }));
+
+    if (this.plugin.settings.useTemplateFile) {
+      new Setting(containerEl)
+        .setName('Template File Path')
+        .setDesc('Path to your template file (e.g., "Templates/meeting-template.md")')
+        .addText(text => text
+          .setPlaceholder('Templates/meeting-template.md')
+          .setValue(this.plugin.settings.noteContentTemplateFile)
+          .onChange(async (value) => {
+            this.plugin.settings.noteContentTemplateFile = value;
+            await this.plugin.saveSettings();
+          }))
+        .addButton(button => button
+          .setButtonText('Test')
+          .setTooltip('Test if template file exists and is readable')
+          .onClick(async () => {
+            const testNotice = new Notice('Testing template file...', 0);
+            try {
+              const templateLoader = new TemplateLoader(this.app.vault);
+              const isValid = templateLoader.validateTemplateFile(this.plugin.settings.noteContentTemplateFile);
+              
+              testNotice.hide();
+              if (isValid) {
+                const content = await templateLoader.loadTemplateFromFile(this.plugin.settings.noteContentTemplateFile);
+                new Notice(`✅ Template file loaded! (${content.length} characters)`, 3000);
+              } else {
+                new Notice('❌ Template file not found. Please check the path.', 5000);
+              }
+            } catch (error) {
+              testNotice.hide();
+              new Notice('❌ Error loading template: ' + (error instanceof Error ? error.message : 'Unknown error'), 5000);
+            }
+          }));
+    } else {
+      new Setting(containerEl)
+        .setName('Note Content Template')
+        .setDesc('Template for note content. Available placeholders: {{filename}}, {{summary}}, {{transcript}}, {{date:format}}, {{time:format}}')
+        .addTextArea(text => text
+          .setPlaceholder('# 회의록\\n\\n**원본 파일:** {{filename}}\\n**생성 날짜:** {{date:YYYY-MM-DD}}\\n\\n## 요약\\n\\n{{summary}}')
+          .setValue(this.plugin.settings.noteContentTemplate)
+          .onChange(async (value) => {
+            this.plugin.settings.noteContentTemplate = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+
+    // AI Configuration Section
+    containerEl.createEl('h3', { text: 'AI Configuration' });
+
+    new Setting(containerEl)
+      .setName('System Prompt')
+      .setDesc('Custom system prompt for AI summarization. This controls how the AI interprets and summarizes your content.')
+      .addTextArea(text => text
+        .setPlaceholder('Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.')
+        .setValue(this.plugin.settings.systemPrompt)
+        .onChange(async (value) => {
+          this.plugin.settings.systemPrompt = value;
           await this.plugin.saveSettings();
         }));
 

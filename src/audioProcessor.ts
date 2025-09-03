@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { AudioSpeedOption } from './types';
 
 const execAsync = promisify(exec);
@@ -12,7 +13,8 @@ export class AudioProcessor {
   private userFfmpegPath: string;
 
   constructor(userFfmpegPath: string = '') {
-    this.tempDir = join(process.cwd(), '.temp');
+    // Use OS temp directory instead of process.cwd() to avoid permission issues in Obsidian
+    this.tempDir = join(tmpdir(), 'attn-audio-processing');
     this.userFfmpegPath = userFfmpegPath;
   }
 
@@ -67,10 +69,12 @@ export class AudioProcessor {
     try {
       const fs = require('fs');
       if (!fs.existsSync(this.tempDir)) {
-        fs.mkdirSync(this.tempDir, { recursive: true });
+        // Create directory with full permissions for temp usage
+        fs.mkdirSync(this.tempDir, { recursive: true, mode: 0o755 });
       }
     } catch (error) {
-      throw new Error(`Failed to create temp directory: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Failed to create temp directory:', error);
+      throw new Error(`Failed to create temp directory at ${this.tempDir}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
