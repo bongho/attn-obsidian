@@ -1,16 +1,23 @@
-import { TemplateLoader } from '../src/templateLoader';
-import { TFile, Vault } from 'obsidian';
-
-// Mock Obsidian classes
-class MockTFile {
-  name: string;
-  path: string;
-  
-  constructor(path: string) {
-    this.path = path;
-    this.name = path.split('/').pop() || path;
+// Mock obsidian module
+jest.mock('obsidian', () => {
+  class MockTFile {
+    name: string;
+    path: string;
+    
+    constructor(path: string) {
+      this.path = path;
+      this.name = path.split('/').pop() || path;
+    }
   }
-}
+  
+  return {
+    TFile: MockTFile,
+    Vault: jest.fn(),
+  };
+});
+
+import { TemplateLoader } from '../src/templateLoader';
+import { TFile } from 'obsidian';
 
 class MockVault {
   private files: Map<string, string> = new Map();
@@ -21,7 +28,7 @@ class MockVault {
   
   getAbstractFileByPath(path: string) {
     if (this.files.has(path)) {
-      return new MockTFile(path) as TFile;
+      return new TFile(path);
     }
     return null;
   }
@@ -29,7 +36,7 @@ class MockVault {
   async read(file: TFile): Promise<string> {
     const content = this.files.get(file.path);
     if (content === undefined) {
-      throw new Error(`File not found: ${file.path}`);
+      throw new Error(`Template file not found: ${file.path}`);
     }
     return content;
   }

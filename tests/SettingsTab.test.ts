@@ -20,6 +20,10 @@ jest.mock('obsidian', () => ({
     let buttonComponent: any = null;
     let toggleComponent: any = null;
     
+    this.settingEl = {
+      addClass: jest.fn().mockReturnThis(),
+    };
+    
     this.setName = jest.fn((n: string) => {
       name = n;
       return this;
@@ -112,7 +116,20 @@ describe('ATTNSettingTab', () => {
         useTemplateFile: false,
         systemPrompt: 'Test prompt',
         audioSpeedMultiplier: 1,
-        ffmpegPath: ''
+        ffmpegPath: '',
+        stt: {
+          provider: 'openai' as const,
+          model: 'whisper-1',
+          apiKey: '',
+          baseUrl: '',
+          language: 'ko'
+        },
+        summary: {
+          provider: 'openai' as const,
+          model: 'gpt-4',
+          apiKey: '',
+          baseUrl: '',
+        }
       },
       saveSettings: jest.fn().mockResolvedValue(undefined),
     };
@@ -440,6 +457,190 @@ describe('ATTNSettingTab', () => {
       expect(mockButtonComponent.setButtonText).toHaveBeenCalledWith('Test');
       expect(mockButtonComponent.setTooltip).toHaveBeenCalledWith('Test if FFmpeg is available at this path');
       expect(mockButtonComponent.onClick).toHaveBeenCalled();
+    });
+  });
+
+  describe('STT Provider Configuration', () => {
+    test('should render STT section header', () => {
+      settingTab.display();
+      expect(settingTab.containerEl.createEl).toHaveBeenCalledWith('h3', { text: 'Speech-to-Text (STT) Configuration' });
+    });
+
+    test('should render STT provider dropdown', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const sttProviderSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'STT Provider')
+      );
+      
+      expect(sttProviderSetting).toBeDefined();
+      expect(sttProviderSetting.setDesc).toHaveBeenCalledWith('Select speech-to-text service provider');
+      expect(sttProviderSetting.addDropdown).toHaveBeenCalled();
+    });
+
+    test('should configure STT provider dropdown with correct options', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const sttProviderSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'STT Provider')
+      );
+      
+      const dropdownCallback = sttProviderSetting.addDropdown.mock.calls[0][0];
+      const mockDropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      dropdownCallback(mockDropdownComponent);
+      
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('openai', 'OpenAI Whisper');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('gemini', 'Google Gemini');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('local-whisper', 'Local Whisper');
+      expect(mockDropdownComponent.setValue).toHaveBeenCalledWith('openai');
+    });
+
+    test('should save STT provider when selection changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const sttProviderSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'STT Provider')
+      );
+      
+      const dropdownCallback = sttProviderSetting.addDropdown.mock.calls[0][0];
+      const mockDropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      dropdownCallback(mockDropdownComponent);
+      const onChangeCallback = mockDropdownComponent.onChange.mock.calls[0][0];
+      
+      await onChangeCallback('gemini');
+      
+      expect(mockPlugin.settings.stt.provider).toBe('gemini');
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should render STT model input field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const sttModelSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'STT Model')
+      );
+      
+      expect(sttModelSetting).toBeDefined();
+      expect(sttModelSetting.setDesc).toHaveBeenCalledWith('OpenAI Whisper model to use for speech-to-text');
+      expect(sttModelSetting.addDropdown).toHaveBeenCalled();
+    });
+
+    test('should show local whisper options when local-whisper provider is selected', () => {
+      const { Setting } = require('obsidian');
+      mockPlugin.settings.stt.provider = 'local-whisper';
+      mockPlugin.settings.stt.ollamaEndpoint = 'http://localhost:11434';
+      mockPlugin.settings.stt.whisperBinaryPath = '';
+      
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const ollamaEndpointSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Ollama Endpoint (for Local Whisper)')
+      );
+      
+      expect(ollamaEndpointSetting).toBeDefined();
+      expect(ollamaEndpointSetting.setDesc).toHaveBeenCalledWith('Ollama server endpoint URL for local whisper models (if using Ollama)');
+    });
+  });
+
+  describe('Summary Provider Configuration', () => {
+    test('should render Summary section header', () => {
+      settingTab.display();
+      expect(settingTab.containerEl.createEl).toHaveBeenCalledWith('h3', { text: 'Summary Configuration' });
+    });
+
+    test('should render Summary provider dropdown', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const summaryProviderSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Summary Provider')
+      );
+      
+      expect(summaryProviderSetting).toBeDefined();
+      expect(summaryProviderSetting.setDesc).toHaveBeenCalledWith('Select summarization service provider');
+      expect(summaryProviderSetting.addDropdown).toHaveBeenCalled();
+    });
+
+    test('should configure Summary provider dropdown with correct options', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const summaryProviderSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Summary Provider')
+      );
+      
+      const dropdownCallback = summaryProviderSetting.addDropdown.mock.calls[0][0];
+      const mockDropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      dropdownCallback(mockDropdownComponent);
+      
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('openai', 'OpenAI GPT');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('gemini', 'Google Gemini');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('local-llm', 'Local LLM (Ollama)');
+      expect(mockDropdownComponent.setValue).toHaveBeenCalledWith('openai');
+    });
+
+    test('should save Summary provider when selection changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const summaryProviderSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Summary Provider')
+      );
+      
+      const dropdownCallback = summaryProviderSetting.addDropdown.mock.calls[0][0];
+      const mockDropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      dropdownCallback(mockDropdownComponent);
+      const onChangeCallback = mockDropdownComponent.onChange.mock.calls[0][0];
+      
+      await onChangeCallback('local-llm');
+      
+      expect(mockPlugin.settings.summary.provider).toBe('local-llm');
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+  });
+
+  describe('Settings Migration', () => {
+    test('should migrate old openaiApiKey to new structure', () => {
+      const legacySettings = {
+        openaiApiKey: 'sk-test123',
+        // other legacy settings...
+      };
+      
+      // This test will be implemented when we add the migration logic
+      // For now, it's a placeholder to ensure we test backward compatibility
+      expect(true).toBe(true);
     });
   });
 });

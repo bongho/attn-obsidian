@@ -28,16 +28,21 @@ class MockApp {
   vault = {
     create: jest.fn(),
     exists: jest.fn(),
+    readBinary: jest.fn().mockResolvedValue(new ArrayBuffer(1024)),
   };
 }
 
-class MockTFile {
+// Use the mocked TFile from __mocks__/obsidian.ts
+const { TFile } = require('obsidian');
+
+class MockTFile extends TFile {
   name: string;
   basename: string;
   extension: string;
   path: string;
 
   constructor(name: string, extension: string) {
+    super(name);
     this.name = name;
     this.basename = name.replace(/\.[^/.]+$/, '');
     this.extension = extension;
@@ -54,17 +59,29 @@ class MockMenu {
 
   addItem(callback: (item: any) => void) {
     const item = {
-      setTitle: jest.fn().mockReturnThis(),
-      setIcon: jest.fn().mockReturnThis(),
-      onClick: jest.fn().mockReturnThis(),
+      setTitle: jest.fn((title: string) => {
+        item._title = title;
+        return item;
+      }),
+      setIcon: jest.fn((icon: string) => {
+        item._icon = icon;
+        return item;
+      }),
+      onClick: jest.fn((clickHandler: () => void) => {
+        item._onClick = clickHandler;
+        return item;
+      }),
+      _title: '',
+      _icon: '',
+      _onClick: () => {},
     };
     
     callback(item);
     
     this.items.push({
-      title: item.setTitle.mock.calls[0]?.[0] || '',
-      icon: item.setIcon.mock.calls[0]?.[0] || '',
-      onClick: item.onClick.mock.calls[0]?.[0] || (() => {}),
+      title: item._title,
+      icon: item._icon,
+      onClick: item._onClick,
     });
     
     return this;
@@ -133,7 +150,18 @@ describe('ATTNPlugin Integration', () => {
       useTemplateFile: false,
       systemPrompt: 'Test prompt',
       audioSpeedMultiplier: 1,
-      ffmpegPath: ''
+      ffmpegPath: '',
+      stt: {
+        provider: 'openai' as const,
+        model: 'whisper-1',
+        language: 'ko',
+        whisperBackend: 'faster-whisper-cpp' as const,
+        whisperModelPathOrName: 'base'
+      },
+      summary: {
+        provider: 'openai' as const,
+        model: 'gpt-4'
+      }
     });
     plugin.saveData = jest.fn().mockResolvedValue(undefined);
   });
@@ -158,7 +186,7 @@ describe('ATTNPlugin Integration', () => {
       await plugin.onload();
 
       expect(plugin.loadData).toHaveBeenCalled();
-      expect(plugin.settings).toEqual({ 
+      expect(plugin.settings).toEqual(expect.objectContaining({ 
         openaiApiKey: 'test-key',
         saveFolderPath: 'Notes/Meetings',
         noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
@@ -167,8 +195,19 @@ describe('ATTNPlugin Integration', () => {
         useTemplateFile: false,
         systemPrompt: 'Test prompt',
         audioSpeedMultiplier: 1,
-        ffmpegPath: ''
-      });
+        ffmpegPath: '',
+        stt: expect.objectContaining({
+          provider: 'openai',
+          model: 'whisper-1',
+          language: 'ko',
+          whisperBackend: 'faster-whisper-cpp',
+          whisperModelPathOrName: 'base'
+        }),
+        summary: expect.objectContaining({
+          provider: 'openai', 
+          model: 'gpt-4'
+        })
+      }));
     });
   });
 
@@ -227,10 +266,18 @@ describe('ATTNPlugin Integration', () => {
       await plugin.onload();
       
       // Setup successful API responses and template processing
-      mockApiService.processAudioFile.mockResolvedValue(mockSummary);
+      mockApiService.processAudioFile.mockResolvedValue({
+        transcript: mockTranscript,
+        summary: mockSummary,
+        verboseResult: {
+          text: mockTranscript,
+          segments: [],
+          language: 'ko'
+        }
+      });
       mockNoteCreator.createNote.mockResolvedValue();
       mockTemplateProcessor.process
-        .mockReturnValueOnce('meeting-2025-09-02.md') // filename template result
+        .mockReturnValueOnce('meeting-2025-09-02') // filename template result
         .mockReturnValueOnce('# Meeting\n\nTest meeting summary'); // content template result
       
       // Get the file-menu handler
@@ -256,9 +303,19 @@ describe('ATTNPlugin Integration', () => {
       // Wait for async operations
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      // Verify the orchestration flow
-      expect(ApiService).toHaveBeenCalledWith('test-key');
-      expect(mockApiService.processAudioFile).toHaveBeenCalledWith(expect.any(File));
+      // Verify the orchestration flow - ApiService now expects settings object
+      expect(ApiService).toHaveBeenCalledWith(expect.objectContaining({
+        openaiApiKey: 'test-key',
+        stt: expect.objectContaining({ provider: 'openai' }),
+        summary: expect.objectContaining({ provider: 'openai' })
+      }));
+      expect(mockApiService.processAudioFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'meeting.m4a',
+          type: 'audio/m4a'
+        }), 
+        'Test prompt'
+      );
       expect(TemplateProcessor).toHaveBeenCalledTimes(1);
       expect(mockTemplateProcessor.process).toHaveBeenCalledTimes(2);
       expect(NoteCreator).toHaveBeenCalledWith(mockApp.vault);
@@ -299,11 +356,16 @@ describe('ATTNPlugin Integration', () => {
     });
 
     test('should construct full file path using saveFolderPath setting', async () => {
+      // Reset mocks for this test
+      mockTemplateProcessor.process.mockReset();
+      
       const mockMenu = new MockMenu();
       const m4aFile = new MockTFile('test.m4a', 'm4a');
       
       mockApp.vault.readBinary = jest.fn().mockResolvedValue(new ArrayBuffer(512));
-      mockTemplateProcessor.process.mockReturnValueOnce('test-file.md');
+      mockTemplateProcessor.process
+        .mockReturnValueOnce('test-file') // filename template result  
+        .mockReturnValueOnce('Test content'); // content template result
 
       fileMenuHandler(mockMenu as any, m4aFile as any);
       await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
@@ -316,8 +378,10 @@ describe('ATTNPlugin Integration', () => {
     });
 
     test('should handle missing API key', async () => {
-      // Override settings to have empty API key
+      // Override settings to have empty API keys
       plugin.settings.openaiApiKey = '';
+      plugin.settings.stt.apiKey = '';
+      plugin.settings.summary.apiKey = '';
       
       const mockMenu = new MockMenu();
       const m4aFile = new MockTFile('meeting.m4a', 'm4a');
@@ -331,7 +395,7 @@ describe('ATTNPlugin Integration', () => {
       await new Promise(resolve => setTimeout(resolve, 0));
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('API 키가 설정되지 않았습니다')
+        expect.stringContaining('STT API 키가 설정되지 않았습니다')
       );
       
       consoleSpy.mockRestore();
@@ -386,13 +450,56 @@ describe('ATTNPlugin Integration', () => {
       // Clear previous mocks and set up fresh state
       jest.clearAllMocks();
       
+      // Reset the template processor mock specifically
+      mockTemplateProcessor.process.mockReset();
+      
       // Set plugin settings with API key
       plugin.settings = {
         openaiApiKey: 'test-key',
         saveFolderPath: 'Notes/Meetings',
         noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
-        noteContentTemplate: '원문: {{transcript}}\n\n요약: {{summary}}'
+        noteContentTemplate: '원문: {{transcript}}\n\n요약: {{summary}}',
+        noteContentTemplateFile: '',
+        useTemplateFile: false,
+        systemPrompt: 'Test prompt',
+        audioSpeedMultiplier: 1,
+        ffmpegPath: '',
+        stt: {
+          provider: 'openai',
+          model: 'whisper-1',
+          apiKey: 'test-key',
+          language: 'ko'
+        },
+        summary: {
+          provider: 'openai',
+          model: 'gpt-4',
+          apiKey: 'test-key'
+        }
       };
+      
+      // Mock loadData to return our custom settings
+      plugin.loadData = jest.fn().mockResolvedValue({
+        openaiApiKey: 'test-key',
+        saveFolderPath: 'Notes/Meetings',
+        noteFilenameTemplate: '{{filename}}-{{date:YYYY-MM-DD}}',
+        noteContentTemplate: '원문: {{transcript}}\n\n요약: {{summary}}',
+        noteContentTemplateFile: '',
+        useTemplateFile: false,
+        systemPrompt: 'Test prompt',
+        audioSpeedMultiplier: 1,
+        ffmpegPath: '',
+        stt: {
+          provider: 'openai',
+          model: 'whisper-1',
+          apiKey: 'test-key',
+          language: 'ko'
+        },
+        summary: {
+          provider: 'openai',
+          model: 'gpt-4',
+          apiKey: 'test-key'
+        }
+      });
       
       await plugin.onload();
       
@@ -405,7 +512,7 @@ describe('ATTNPlugin Integration', () => {
       
       // Mock template processor to return the final content
       mockTemplateProcessor.process
-        .mockReturnValueOnce('meeting-2025-09-02.md') // filename
+        .mockReturnValueOnce('meeting-2025-09-02') // filename (without .md extension)
         .mockReturnValueOnce('원문: 전체 STT 원문입니다.\n\n요약: 요약된 내용입니다.'); // content
       
       // Get the fresh file-menu handler
@@ -481,17 +588,28 @@ describe('ATTNPlugin Integration', () => {
       
       await plugin.loadSettings();
 
-      expect(plugin.settings).toEqual({ 
+      expect(plugin.settings).toEqual(expect.objectContaining({ 
         openaiApiKey: '',
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
         noteContentTemplateFile: '',
         useTemplateFile: false,
-        systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.',
+        systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items. Please prefer Korean for the summary.',
         audioSpeedMultiplier: 1,
-        ffmpegPath: ''
-      });
+        ffmpegPath: '',
+        stt: expect.objectContaining({
+          provider: 'openai',
+          model: 'whisper-1',
+          language: 'ko',
+          whisperBackend: 'faster-whisper-cpp',
+          whisperModelPathOrName: 'base'
+        }),
+        summary: expect.objectContaining({
+          provider: 'openai',
+          model: 'gpt-4'
+        })
+      }));
     });
 
     test('should merge loaded settings with defaults', async () => {
@@ -499,17 +617,28 @@ describe('ATTNPlugin Integration', () => {
       
       await plugin.loadSettings();
 
-      expect(plugin.settings).toEqual({ 
+      expect(plugin.settings).toEqual(expect.objectContaining({ 
         openaiApiKey: 'existing-key',
         saveFolderPath: '/',
         noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
         noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
         noteContentTemplateFile: '',
         useTemplateFile: false,
-        systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.',
+        systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items. Please prefer Korean for the summary.',
         audioSpeedMultiplier: 1,
-        ffmpegPath: ''
-      });
+        ffmpegPath: '',
+        stt: expect.objectContaining({
+          provider: 'openai',
+          model: 'whisper-1',
+          apiKey: 'existing-key', // 마이그레이션된 키
+          language: 'ko'
+        }),
+        summary: expect.objectContaining({
+          provider: 'openai',
+          model: 'gpt-4',
+          apiKey: 'existing-key' // 마이그레이션된 키
+        })
+      }));
     });
   });
 });

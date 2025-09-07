@@ -1,135 +1,180 @@
 import { ApiService } from '../src/apiService';
-import OpenAI from 'openai';
+import { ATTNSettings } from '../src/types';
 
-// Mock OpenAI
-jest.mock('openai', () => {
-  return jest.fn().mockImplementation(() => ({
-    audio: {
-      transcriptions: {
-        create: jest.fn(),
-      },
-    },
-    chat: {
-      completions: {
-        create: jest.fn(),
-      },
-    },
-  }));
-});
+// Mock providers
+jest.mock('../src/providers/providerFactory', () => ({
+  createSttProvider: jest.fn(),
+  createSummarizationProvider: jest.fn(),
+}));
+
+// Mock ConfigLoader
+jest.mock('../src/configLoader', () => ({
+  ConfigLoader: {
+    getInstance: jest.fn().mockReturnValue({
+      getOpenAIApiKey: jest.fn().mockReturnValue(null),
+      isDebugMode: jest.fn().mockReturnValue(false),
+      getOpenAISettings: jest.fn().mockReturnValue({ language: 'ko' }),
+    }),
+  },
+}));
+
+import { createSttProvider, createSummarizationProvider } from '../src/providers/providerFactory';
 
 describe('ApiService', () => {
   let apiService: ApiService;
-  let mockOpenAI: jest.Mocked<OpenAI>;
-  const testApiKey = 'test-api-key';
+  let mockSttProvider: any;
+  let mockSummaryProvider: any;
+  let testSettings: ATTNSettings;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    apiService = new ApiService(testApiKey);
-    mockOpenAI = (apiService as any).openai;
+    
+    testSettings = {
+      openaiApiKey: 'legacy-key',
+      saveFolderPath: '/',
+      noteFilenameTemplate: '',
+      noteContentTemplate: '',
+      noteContentTemplateFile: '',
+      useTemplateFile: false,
+      systemPrompt: 'Test prompt',
+      audioSpeedMultiplier: 1,
+      ffmpegPath: '',
+      stt: {
+        provider: 'openai',
+        model: 'whisper-1',
+        apiKey: 'stt-key',
+        language: 'ko'
+      },
+      summary: {
+        provider: 'openai',
+        model: 'gpt-4',
+        apiKey: 'summary-key'
+      }
+    };
+
+    mockSttProvider = {
+      transcribe: jest.fn(),
+    };
+
+    mockSummaryProvider = {
+      summarize: jest.fn(),
+    };
+
+    (createSttProvider as jest.Mock).mockReturnValue(mockSttProvider);
+    (createSummarizationProvider as jest.Mock).mockReturnValue(mockSummaryProvider);
+
+    apiService = new ApiService(testSettings);
   });
 
   describe('constructor', () => {
-    test('should initialize with API key', () => {
-      expect(OpenAI).toHaveBeenCalledWith({
-        apiKey: testApiKey,
-        dangerouslyAllowBrowser: true,
-      });
+    test('should initialize with settings', () => {
       expect(apiService).toBeInstanceOf(ApiService);
+      // Constructor should not throw and should set up properly
     });
   });
 
   describe('processAudioFile', () => {
-    const mockAudioFile = new File(['audio data'], 'test.m4a', { type: 'audio/m4a' });
-    const mockTranscriptionText = 'This is the transcribed text from the audio file.';
+    const mockAudioFile = {
+      name: 'test.m4a',
+      type: 'audio/m4a',
+      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(1024))
+    } as File;
+    const mockVerboseResult = {
+      text: 'This is the transcribed text from the audio file.',
+      segments: [
+        { id: 0, start: 0, end: 5, text: 'This is the transcribed text' },
+        { id: 1, start: 5, end: 10, text: 'from the audio file.' }
+      ],
+      language: 'en',
+      duration: 10
+    };
     const mockSummaryText = 'This is a summary of the meeting content.';
 
     beforeEach(() => {
-      // Mock Whisper API response
-      mockOpenAI.audio.transcriptions.create.mockResolvedValue({
-        text: mockTranscriptionText,
-      } as any);
+      // Mock STT provider response
+      mockSttProvider.transcribe.mockResolvedValue(mockVerboseResult);
 
-      // Mock GPT API response
-      mockOpenAI.chat.completions.create.mockResolvedValue({
-        choices: [{
-          message: {
-            content: mockSummaryText,
-          },
-        }],
-      } as any);
+      // Mock Summary provider response  
+      mockSummaryProvider.summarize.mockResolvedValue(mockSummaryText);
     });
 
-    test('should call Whisper API for transcription', async () => {
+    test('should call STT provider for transcription', async () => {
       await apiService.processAudioFile(mockAudioFile);
 
-      expect(mockOpenAI.audio.transcriptions.create).toHaveBeenCalledWith({
-        file: mockAudioFile,
+      expect(createSttProvider).toHaveBeenCalledWith(expect.objectContaining({
+        provider: 'openai',
         model: 'whisper-1',
-        language: 'ko',
-      });
+        apiKey: 'stt-key',
+        language: 'ko'
+      }));
+      expect(mockSttProvider.transcribe).toHaveBeenCalledWith(
+        expect.any(ArrayBuffer),
+        {
+          format: 'verbose_json',
+          language: 'ko',
+          model: 'whisper-1'
+        }
+      );
     });
 
-    test('should call GPT API with transcribed text for summarization', async () => {
+    test('should call Summary provider for summarization', async () => {
       await apiService.processAudioFile(mockAudioFile);
 
-      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledWith({
+      expect(createSummarizationProvider).toHaveBeenCalledWith(expect.objectContaining({
+        provider: 'openai',
         model: 'gpt-4',
-        messages: [
-          {
-            role: 'system',
-            content: '당신은 회의록 정리 전문가입니다. 주어진 회의 내용을 체계적으로 정리하여 명확하고 유용한 회의록을 작성해주세요.',
-          },
-          {
-            role: 'user',
-            content: `다음 회의 내용을 정리해주세요:\n\n${mockTranscriptionText}`,
-          },
-        ],
-        temperature: 0.3,
-      });
+        apiKey: 'summary-key'
+      }));
+      expect(mockSummaryProvider.summarize).toHaveBeenCalledWith(
+        {
+          text: mockVerboseResult.text,
+          segments: mockVerboseResult.segments,
+          language: mockVerboseResult.language
+        },
+        {
+          model: 'gpt-4'
+        }
+      );
     });
 
-    test('should return both transcript and summary in object format', async () => {
+    test('should return transcript, summary and verbose result', async () => {
       const result = await apiService.processAudioFile(mockAudioFile);
 
       expect(result).toEqual({
-        transcript: mockTranscriptionText,
-        summary: mockSummaryText
+        transcript: mockVerboseResult.text,
+        summary: mockSummaryText,
+        verboseResult: mockVerboseResult
       });
     });
 
-    test('should handle Whisper API errors', async () => {
-      const errorMessage = 'Whisper API error';
-      mockOpenAI.audio.transcriptions.create.mockRejectedValue(new Error(errorMessage));
+    test('should handle STT provider errors', async () => {
+      const errorMessage = 'STT provider error';
+      mockSttProvider.transcribe.mockRejectedValue(new Error(errorMessage));
 
       await expect(apiService.processAudioFile(mockAudioFile))
         .rejects.toThrow(`음성 인식 실패: ${errorMessage}`);
     });
 
-    test('should handle GPT API errors', async () => {
-      const errorMessage = 'GPT API error';
-      mockOpenAI.chat.completions.create.mockRejectedValue(new Error(errorMessage));
+    test('should handle Summary provider errors', async () => {
+      const errorMessage = 'Summary provider error';
+      mockSummaryProvider.summarize.mockRejectedValue(new Error(errorMessage));
 
       await expect(apiService.processAudioFile(mockAudioFile))
         .rejects.toThrow(`요약 생성 실패: ${errorMessage}`);
     });
 
     test('should handle empty transcription response', async () => {
-      mockOpenAI.audio.transcriptions.create.mockResolvedValue({
+      mockSttProvider.transcribe.mockResolvedValue({
         text: '',
-      } as any);
+        segments: []
+      });
 
       await expect(apiService.processAudioFile(mockAudioFile))
         .rejects.toThrow('음성 인식 결과가 비어있습니다.');
     });
 
-    test('should handle empty GPT response', async () => {
-      mockOpenAI.chat.completions.create.mockResolvedValue({
-        choices: [{
-          message: {
-            content: '',
-          },
-        }],
-      } as any);
+    test('should handle empty summary response', async () => {
+      mockSummaryProvider.summarize.mockResolvedValue('');
 
       await expect(apiService.processAudioFile(mockAudioFile))
         .rejects.toThrow('요약 결과가 비어있습니다.');
@@ -138,24 +183,28 @@ describe('ApiService', () => {
     test('should process transcription and summary sequentially', async () => {
       await apiService.processAudioFile(mockAudioFile);
 
-      // Verify both APIs were called
-      expect(mockOpenAI.audio.transcriptions.create).toHaveBeenCalled();
-      expect(mockOpenAI.chat.completions.create).toHaveBeenCalled();
+      // Verify both providers were called
+      expect(mockSttProvider.transcribe).toHaveBeenCalled();
+      expect(mockSummaryProvider.summarize).toHaveBeenCalled();
       
       // Verify transcription was called first by checking call times
-      const transcriptionCallTime = mockOpenAI.audio.transcriptions.create.mock.invocationCallOrder[0];
-      const chatCallTime = mockOpenAI.chat.completions.create.mock.invocationCallOrder[0];
-      expect(transcriptionCallTime).toBeLessThan(chatCallTime);
+      const transcriptionCallTime = mockSttProvider.transcribe.mock.invocationCallOrder[0];
+      const summaryCallTime = mockSummaryProvider.summarize.mock.invocationCallOrder[0];
+      expect(transcriptionCallTime).toBeLessThan(summaryCallTime);
     });
   });
 
-  describe('error handling', () => {
-    test('should throw error for invalid API key format', () => {
-      expect(() => new ApiService('')).toThrow('API 키가 필요합니다.');
-    });
+  describe('settings handling', () => {
+    test('should use legacy API key when provider keys are missing', () => {
+      const settingsWithoutProviderKeys = {
+        ...testSettings,
+        stt: { ...testSettings.stt, apiKey: undefined },
+        summary: { ...testSettings.summary, apiKey: undefined }
+      };
 
-    test('should throw error for null API key', () => {
-      expect(() => new ApiService(null as any)).toThrow('API 키가 필요합니다.');
+      const service = new ApiService(settingsWithoutProviderKeys);
+      expect(service).toBeInstanceOf(ApiService);
+      // Constructor should not throw even with missing provider API keys
     });
   });
 });

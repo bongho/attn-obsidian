@@ -1,55 +1,46 @@
-import OpenAI from 'openai';
 import { ConfigLoader } from './configLoader';
+import { createSttProvider, createSummarizationProvider } from './providers/providerFactory';
+import { ATTNSettings, VerboseTranscriptionResult } from './types';
 
 export interface ProcessAudioResult {
   transcript: string;
   summary: string;
+  verboseResult?: VerboseTranscriptionResult; // New field for detailed transcription data
 }
 
 export class ApiService {
-  private openai: OpenAI;
   private config: ConfigLoader;
+  private settings: ATTNSettings;
 
-  constructor(apiKey?: string) {
+  constructor(settings: ATTNSettings) {
     this.config = ConfigLoader.getInstance();
-    
-    // Try to get API key from config file first, then fallback to parameter
-    const configApiKey = this.config.getOpenAIApiKey();
-    const finalApiKey = configApiKey || apiKey;
-
-    if (!finalApiKey || typeof finalApiKey !== 'string' || finalApiKey.trim() === '') {
-      throw new Error('API 키가 필요합니다. config.json 파일을 생성하거나 설정에서 API 키를 입력해주세요.');
-    }
-
-    this.openai = new OpenAI({
-      apiKey: finalApiKey,
-      dangerouslyAllowBrowser: true,
-    });
+    this.settings = settings;
 
     if (this.config.isDebugMode()) {
-      console.log('🔧 ATTN Debug: ApiService initialized with config file');
+      console.log('🔧 ATTN Debug: ApiService initialized with new provider system');
     }
   }
 
   async processAudioFile(audioFile: File, systemPrompt?: string): Promise<ProcessAudioResult> {
     try {
-      // Step 1: Transcribe audio using Whisper
-      const transcription = await this.transcribeAudio(audioFile);
+      // Step 1: Transcribe audio using the configured STT provider
+      const verboseResult = await this.transcribeAudioVerbose(audioFile);
       
-      if (!transcription || transcription.trim() === '') {
+      if (!verboseResult.text || verboseResult.text.trim() === '') {
         throw new Error('음성 인식 결과가 비어있습니다.');
       }
 
-      // Step 2: Summarize transcription using GPT with custom system prompt
-      const summary = await this.summarizeText(transcription, systemPrompt);
+      // Step 2: Summarize transcription using the configured summarization provider
+      const summary = await this.summarizeWithSegments(verboseResult, systemPrompt);
       
       if (!summary || summary.trim() === '') {
         throw new Error('요약 결과가 비어있습니다.');
       }
 
       return {
-        transcript: transcription,
-        summary: summary
+        transcript: verboseResult.text,
+        summary: summary,
+        verboseResult: verboseResult
       };
     } catch (error) {
       if (error instanceof Error) {
@@ -69,22 +60,34 @@ export class ApiService {
     }
   }
 
-  private async transcribeAudio(audioFile: File): Promise<string> {
+  private async transcribeAudioVerbose(audioFile: File): Promise<VerboseTranscriptionResult> {
     try {
-      const whisperModel = this.config.getWhisperModel();
-      const openaiSettings = this.config.getOpenAISettings();
+      // Get effective STT settings (priority: settings.stt.apiKey > legacy openaiApiKey > config file)
+      const effectiveSttSettings = {
+        ...this.settings.stt,
+        apiKey: this.settings.stt.apiKey || this.settings.openaiApiKey || this.config.getOpenAIApiKey() || '',
+        language: this.settings.stt.language || this.config.getOpenAISettings()?.language || 'ko'
+      };
 
-      const response = await this.openai.audio.transcriptions.create({
-        file: audioFile,
-        model: whisperModel,
-        language: openaiSettings?.language || 'ko',
+      if (!effectiveSttSettings.apiKey && effectiveSttSettings.provider === 'openai') {
+        throw new Error('STT API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
+      }
+
+      const sttProvider = createSttProvider(effectiveSttSettings);
+      const audioBuffer = await audioFile.arrayBuffer();
+      
+      const result = await sttProvider.transcribe(audioBuffer, {
+        format: 'verbose_json',
+        language: effectiveSttSettings.language,
+        model: effectiveSttSettings.model
       });
 
       if (this.config.isDebugMode()) {
-        console.log(`🔧 ATTN Debug: Transcription completed using ${whisperModel}`);
+        console.log(`🔧 ATTN Debug: Transcription completed using ${effectiveSttSettings.provider}/${effectiveSttSettings.model}`);
+        console.log(`🔧 ATTN Debug: Segments found: ${result.segments.length}`);
       }
 
-      return response.text;
+      return result;
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`음성 인식 실패: ${error.message}`);
@@ -93,37 +96,39 @@ export class ApiService {
     }
   }
 
-  private async summarizeText(text: string, customSystemPrompt?: string): Promise<string> {
+  private async summarizeWithSegments(verboseResult: VerboseTranscriptionResult, customSystemPrompt?: string): Promise<string> {
     try {
-      const openaiSettings = this.config.getOpenAISettings();
-      const model = openaiSettings?.model || 'gpt-4';
-      const temperature = openaiSettings?.temperature || 0.3;
+      // Get effective Summary settings
+      const effectiveSummarySettings = {
+        ...this.settings.summary,
+        apiKey: this.settings.summary.apiKey || this.settings.openaiApiKey || this.config.getOpenAIApiKey() || ''
+      };
 
-      // Use custom system prompt if provided, otherwise use default
-      const systemPrompt = customSystemPrompt || 
-        '당신은 회의록 정리 전문가입니다. 주어진 회의 내용을 체계적으로 정리하여 명확하고 유용한 회의록을 작성해주세요.';
+      if (!effectiveSummarySettings.apiKey && effectiveSummarySettings.provider === 'openai') {
+        throw new Error('Summary API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
+      }
 
-      const response = await this.openai.chat.completions.create({
-        model: model,
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt,
-          },
-          {
-            role: 'user',
-            content: `다음 회의 내용을 정리해주세요:\n\n${text}`,
-          },
-        ],
-        temperature: temperature,
+      const summaryProvider = createSummarizationProvider(effectiveSummarySettings);
+      
+      // Use custom system prompt if provided, otherwise use settings
+      const systemPrompt = customSystemPrompt || this.settings.systemPrompt;
+
+      const input = {
+        text: verboseResult.text,
+        segments: verboseResult.segments,
+        language: verboseResult.language
+      };
+
+      const result = await summaryProvider.summarize(input, {
+        model: effectiveSummarySettings.model
       });
 
       if (this.config.isDebugMode()) {
-        console.log(`🔧 ATTN Debug: Summary completed using ${model} (temp: ${temperature})`);
-        console.log(`🔧 ATTN Debug: System prompt: ${systemPrompt.substring(0, 100)}...`);
+        console.log(`🔧 ATTN Debug: Summary completed using ${effectiveSummarySettings.provider}/${effectiveSummarySettings.model}`);
+        console.log(`🔧 ATTN Debug: Used ${verboseResult.segments.length} segments for enhanced summarization`);
       }
 
-      return response.choices[0]?.message?.content || '';
+      return result;
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`요약 생성 실패: ${error.message}`);

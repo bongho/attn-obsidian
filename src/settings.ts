@@ -1,5 +1,5 @@
-import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
-import { ATTNSettings } from './types';
+import { App, PluginSettingTab, Setting, Notice, SuggestModal } from 'obsidian';
+import { ATTNSettings, SttProvider, SummaryProvider, WhisperBackend } from './types';
 import ATTNPlugin from './main';
 import { AudioProcessor } from './audioProcessor';
 import { TemplateLoader } from './templateLoader';
@@ -33,16 +33,50 @@ export class ATTNSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new Setting(containerEl)
+    // Save Folder Path with real-time autocomplete
+    const saveFolderSetting = new Setting(containerEl)
       .setName('Save Folder Path')
-      .setDesc('Specify the folder where generated notes will be saved (e.g., "Notes/Meetings" or "/" for root)')
+      .setDesc('Specify the folder where generated notes will be saved. Type to see suggestions or click "Browse".')
       .addText(text => text
         .setPlaceholder('/')
         .setValue(this.plugin.settings.saveFolderPath)
         .onChange(async (value) => {
           this.plugin.settings.saveFolderPath = value;
           await this.plugin.saveSettings();
+        }))
+      .addButton(button => button
+        .setButtonText('Browse')
+        .setTooltip('Browse and select folder')
+        .onClick(async () => {
+          const folders = this.getAllFolders();
+          const modal = new FolderSuggestModal(this.app, folders);
+          modal.onChoose = (folder: string) => {
+            // Update the text input
+            const textInputs = containerEl.querySelectorAll('input[type="text"]');
+            const saveFolderInput = Array.from(textInputs).find(input => 
+              (input as HTMLInputElement).value === this.plugin.settings.saveFolderPath
+            ) as HTMLInputElement;
+            
+            if (saveFolderInput) {
+              saveFolderInput.value = folder;
+              saveFolderInput.dispatchEvent(new Event('input'));
+            }
+          };
+          modal.open();
         }));
+
+    // Add autocomplete dropdown to save folder input
+    setTimeout(() => {
+      const saveFolderInput = saveFolderSetting.settingEl.querySelector('input[type="text"]') as HTMLInputElement;
+      if (saveFolderInput) {
+        const inputContainer = saveFolderInput.parentElement;
+        if (inputContainer) {
+          inputContainer.style.position = 'relative';
+          const dropdown = this.createAutocompleteDropdown(saveFolderInput, (input) => this.getFolderSuggestions(input));
+          inputContainer.appendChild(dropdown);
+        }
+      }
+    }, 0);
 
     new Setting(containerEl)
       .setName('Note Filename Template')
@@ -70,9 +104,10 @@ export class ATTNSettingTab extends PluginSettingTab {
         }));
 
     if (this.plugin.settings.useTemplateFile) {
-      new Setting(containerEl)
+      // Template File Path with real-time autocomplete
+      const templateFileSetting = new Setting(containerEl)
         .setName('Template File Path')
-        .setDesc('Path to your template file (e.g., "Templates/meeting-template.md")')
+        .setDesc('Path to your template file. Type to see suggestions or click "Browse".')
         .addText(text => text
           .setPlaceholder('Templates/meeting-template.md')
           .setValue(this.plugin.settings.noteContentTemplateFile)
@@ -80,6 +115,27 @@ export class ATTNSettingTab extends PluginSettingTab {
             this.plugin.settings.noteContentTemplateFile = value;
             await this.plugin.saveSettings();
           }))
+        .addButton(button => button
+          .setButtonText('Browse')
+          .setTooltip('Browse and select template file')
+          .onClick(async () => {
+            const files = this.app.vault.getMarkdownFiles().map(file => file.path);
+            const modal = new FileSuggestModal(this.app, files);
+            modal.onChoose = (filePath: string) => {
+              // Update the text input
+              const textInputs = containerEl.querySelectorAll('input[type="text"]');
+              const templateFileInput = Array.from(textInputs).find(input => 
+                (input as HTMLInputElement).value === this.plugin.settings.noteContentTemplateFile
+              ) as HTMLInputElement;
+              
+              if (templateFileInput) {
+                templateFileInput.value = filePath;
+                templateFileInput.dispatchEvent(new Event('input'));
+              }
+            };
+            modal.open();
+          }))
+
         .addButton(button => button
           .setButtonText('Test')
           .setTooltip('Test if template file exists and is readable')
@@ -101,6 +157,19 @@ export class ATTNSettingTab extends PluginSettingTab {
               new Notice('❌ Error loading template: ' + (error instanceof Error ? error.message : 'Unknown error'), 5000);
             }
           }));
+
+      // Add autocomplete dropdown to template file input
+      setTimeout(() => {
+        const templateFileInput = templateFileSetting.settingEl.querySelector('input[type="text"]') as HTMLInputElement;
+        if (templateFileInput) {
+          const inputContainer = templateFileInput.parentElement;
+          if (inputContainer) {
+            inputContainer.style.position = 'relative';
+            const dropdown = this.createAutocompleteDropdown(templateFileInput, (input) => this.getFileSuggestions(input));
+            inputContainer.appendChild(dropdown);
+          }
+        }
+      }, 0);
     } else {
       const templateSetting = new Setting(containerEl)
         .setName('Note Content Template')
@@ -118,8 +187,135 @@ export class ATTNSettingTab extends PluginSettingTab {
       templateSetting.settingEl.addClass('attn-template-textarea');
     }
 
-    // AI Configuration Section
-    containerEl.createEl('h3', { text: 'AI Configuration' });
+    // Speech-to-Text Configuration Section
+    containerEl.createEl('h3', { text: 'Speech-to-Text (STT) Configuration' });
+
+    new Setting(containerEl)
+      .setName('STT Provider')
+      .setDesc('Select speech-to-text service provider')
+      .addDropdown(dropdown => dropdown
+        .addOption('openai', 'OpenAI Whisper')
+        .addOption('gemini', 'Google Gemini')
+        .addOption('local-whisper', 'Local Whisper')
+        .setValue(this.plugin.settings.stt.provider)
+        .onChange(async (value) => {
+          this.plugin.settings.stt.provider = value as SttProvider;
+          await this.plugin.saveSettings();
+          this.display(); // Refresh to show/hide provider-specific fields
+        }));
+
+    // STT Model selection based on provider
+    this.createSttModelSetting(containerEl);
+
+    // Provider-specific settings
+    if (this.plugin.settings.stt.provider === 'local-whisper') {
+      new Setting(containerEl)
+        .setName('Whisper Backend')
+        .setDesc('Choose the whisper implementation to use')
+        .addDropdown(dropdown => dropdown
+          .addOption('faster-whisper-cpp', 'faster-whisper-cpp')
+          .addOption('whisper.cpp', 'whisper.cpp')
+          .setValue(this.plugin.settings.stt.whisperBackend || 'faster-whisper-cpp')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.whisperBackend = value as WhisperBackend;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('Whisper Model Path/Name')
+        .setDesc('Path to model file or model name (e.g., /path/to/model.bin or tiny/base/small/medium/large/large-v2)')
+        .addText(text => text
+          .setPlaceholder('base')
+          .setValue(this.plugin.settings.stt.whisperModelPathOrName || '')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.whisperModelPathOrName = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('Ollama Endpoint (for Local Whisper)')
+        .setDesc('Ollama server endpoint URL for local whisper models (if using Ollama)')
+        .addText(text => text
+          .setPlaceholder('http://localhost:11434')
+          .setValue(this.plugin.settings.stt.ollamaEndpoint || '')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.ollamaEndpoint = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('Whisper Binary Path (Alternative)')
+        .setDesc('Path to local whisper binary (alternative to Ollama)')
+        .addText(text => text
+          .setPlaceholder('/path/to/whisper or /path/to/faster-whisper')
+          .setValue(this.plugin.settings.stt.whisperBinaryPath || '')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.whisperBinaryPath = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+
+    if (this.plugin.settings.stt.provider === 'openai' || this.plugin.settings.stt.provider === 'gemini') {
+      new Setting(containerEl)
+        .setName('STT API Key')
+        .setDesc('API key for the selected provider (overrides OpenAI API Key above)')
+        .addText(text => text
+          .setPlaceholder('Enter API key...')
+          .setValue(this.plugin.settings.stt.apiKey || '')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.apiKey = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+
+    // Summary Configuration Section
+    containerEl.createEl('h3', { text: 'Summary Configuration' });
+
+    new Setting(containerEl)
+      .setName('Summary Provider')
+      .setDesc('Select summarization service provider')
+      .addDropdown(dropdown => dropdown
+        .addOption('openai', 'OpenAI GPT')
+        .addOption('gemini', 'Google Gemini')
+        .addOption('local-llm', 'Local LLM (Ollama)')
+        .setValue(this.plugin.settings.summary.provider)
+        .onChange(async (value) => {
+          this.plugin.settings.summary.provider = value as SummaryProvider;
+          await this.plugin.saveSettings();
+          this.display(); // Refresh to show/hide provider-specific fields
+        }));
+
+    // Summary Model selection based on provider
+    this.createSummaryModelSetting(containerEl);
+
+    if (this.plugin.settings.summary.provider === 'local-llm') {
+      new Setting(containerEl)
+        .setName('Ollama Endpoint (for Summary)')
+        .setDesc('Ollama server endpoint URL for local language models')
+        .addText(text => text
+          .setPlaceholder('http://localhost:11434')
+          .setValue(this.plugin.settings.summary.ollamaEndpoint || '')
+          .onChange(async (value) => {
+            this.plugin.settings.summary.ollamaEndpoint = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+
+    if (this.plugin.settings.summary.provider === 'openai' || this.plugin.settings.summary.provider === 'gemini') {
+      new Setting(containerEl)
+        .setName('Summary API Key')
+        .setDesc('API key for the selected provider (overrides OpenAI API Key above)')
+        .addText(text => text
+          .setPlaceholder('Enter API key...')
+          .setValue(this.plugin.settings.summary.apiKey || '')
+          .onChange(async (value) => {
+            this.plugin.settings.summary.apiKey = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+
+    // Legacy AI Configuration Section (kept for backward compatibility)
+    containerEl.createEl('h3', { text: 'Legacy AI Configuration' });
 
     const promptSetting = new Setting(containerEl)
       .setName('System Prompt')
@@ -243,4 +439,302 @@ export class ATTNSettingTab extends PluginSettingTab {
     
     document.head.appendChild(styleEl);
   }
+
+  private createSttModelSetting(containerEl: HTMLElement): void {
+    const provider = this.plugin.settings.stt.provider;
+    
+    if (provider === 'openai') {
+      new Setting(containerEl)
+        .setName('STT Model')
+        .setDesc('OpenAI Whisper model to use for speech-to-text')
+        .addDropdown(dropdown => dropdown
+          .addOption('whisper-1', 'whisper-1 (Recommended)')
+          .setValue(this.plugin.settings.stt.model || 'whisper-1')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.model = value;
+            await this.plugin.saveSettings();
+          }));
+    } else if (provider === 'gemini') {
+      new Setting(containerEl)
+        .setName('STT Model')
+        .setDesc('Google Gemini model for speech-to-text')
+        .addDropdown(dropdown => dropdown
+          .addOption('gemini-1.5-flash', 'gemini-1.5-flash')
+          .addOption('gemini-1.5-pro', 'gemini-1.5-pro')
+          .setValue(this.plugin.settings.stt.model || 'gemini-1.5-flash')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.model = value;
+            await this.plugin.saveSettings();
+          }));
+    } else if (provider === 'local-whisper') {
+      new Setting(containerEl)
+        .setName('Local Whisper Model')
+        .setDesc('Select the Whisper model size to use')
+        .addDropdown(dropdown => dropdown
+          .addOption('tiny', 'tiny (~39MB)')
+          .addOption('tiny.en', 'tiny.en (~39MB, English only)')
+          .addOption('base', 'base (~74MB)')
+          .addOption('base.en', 'base.en (~74MB, English only)')
+          .addOption('small', 'small (~244MB)')
+          .addOption('small.en', 'small.en (~244MB, English only)')
+          .addOption('medium', 'medium (~769MB)')
+          .addOption('medium.en', 'medium.en (~769MB, English only)')
+          .addOption('large', 'large (~1550MB)')
+          .addOption('large-v2', 'large-v2 (~1550MB)')
+          .addOption('large-v3', 'large-v3 (~1550MB)')
+          .setValue(this.plugin.settings.stt.model || 'base')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.model = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+  }
+
+  private createSummaryModelSetting(containerEl: HTMLElement): void {
+    const provider = this.plugin.settings.summary.provider;
+    
+    if (provider === 'openai') {
+      new Setting(containerEl)
+        .setName('Summary Model')
+        .setDesc('OpenAI model to use for summarization')
+        .addDropdown(dropdown => dropdown
+          .addOption('gpt-5', 'gpt-5')
+          .addOption('gpt-4', 'gpt-4 (Recommended)')
+          .addOption('gpt-4-turbo', 'gpt-4-turbo')
+          .addOption('gpt-4o', 'gpt-4o')
+          .addOption('gpt-4o-mini', 'gpt-4o-mini')
+          .addOption('gpt-3.5-turbo', 'gpt-3.5-turbo')
+          .setValue(this.plugin.settings.summary.model || 'gpt-4')
+          .onChange(async (value) => {
+            this.plugin.settings.summary.model = value;
+            await this.plugin.saveSettings();
+          }));
+    } else if (provider === 'gemini') {
+      new Setting(containerEl)
+        .setName('Summary Model')
+        .setDesc('Google Gemini model for summarization')
+        .addDropdown(dropdown => dropdown
+          .addOption('gemini-1.5-flash', 'gemini-1.5-flash')
+          .addOption('gemini-1.5-pro', 'gemini-1.5-pro')
+          .addOption('gemini-pro', 'gemini-pro')
+          .setValue(this.plugin.settings.summary.model || 'gemini-1.5-flash')
+          .onChange(async (value) => {
+            this.plugin.settings.summary.model = value;
+            await this.plugin.saveSettings();
+          }));
+    } else if (provider === 'local-llm') {
+      new Setting(containerEl)
+        .setName('Summary Model')
+        .setDesc('Local LLM model name (e.g., llama3.1, mistral, codellama)')
+        .addText(text => text
+          .setPlaceholder('llama3.1')
+          .setValue(this.plugin.settings.summary.model || 'llama3.1')
+          .onChange(async (value) => {
+            this.plugin.settings.summary.model = value;
+            await this.plugin.saveSettings();
+          }));
+    }
+  }
+
+  private getAllFolders(): string[] {
+    const folders: string[] = ['/']; // Include root folder
+    
+    // Get all folders from existing file paths
+    this.app.vault.getAllLoadedFiles().forEach(file => {
+      if (file.path.includes('/')) {
+        const folderPath = file.path.substring(0, file.path.lastIndexOf('/'));
+        if (!folders.includes(folderPath)) {
+          folders.push(folderPath);
+        }
+      }
+    });
+    
+    return folders.sort();
+  }
+
+  private getFolderSuggestions(input: string): string[] {
+    const allFolders = this.getAllFolders();
+    
+    if (!input || input === '/') {
+      return allFolders.slice(0, 10);
+    }
+    
+    // If input ends with '/', show subfolders
+    if (input.endsWith('/')) {
+      const basePath = input.slice(0, -1);
+      return allFolders
+        .filter(folder => folder.startsWith(basePath + '/') && folder !== basePath)
+        .slice(0, 10);
+    }
+    
+    // Otherwise, filter folders that match the input
+    return allFolders
+      .filter(folder => folder.toLowerCase().includes(input.toLowerCase()))
+      .slice(0, 10);
+  }
+
+  private getFileSuggestions(input: string): string[] {
+    const allFiles = this.app.vault.getMarkdownFiles().map(file => file.path);
+    
+    if (!input) {
+      return allFiles.slice(0, 10);
+    }
+    
+    // If input ends with '/', show files in that directory
+    if (input.endsWith('/')) {
+      const dirPath = input.slice(0, -1);
+      return allFiles
+        .filter(file => {
+          const fileDir = file.substring(0, file.lastIndexOf('/'));
+          return fileDir === dirPath || (dirPath === '' && !file.includes('/'));
+        })
+        .slice(0, 10);
+    }
+    
+    // Otherwise, filter files that match the input
+    return allFiles
+      .filter(file => file.toLowerCase().includes(input.toLowerCase()))
+      .slice(0, 10);
+  }
+
+  private createAutocompleteDropdown(input: HTMLInputElement, getSuggestions: (value: string) => string[]): HTMLElement {
+    const dropdown = document.createElement('div');
+    dropdown.className = 'attn-autocomplete-dropdown';
+    dropdown.style.cssText = `
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--background-primary);
+      border: 1px solid var(--background-modifier-border);
+      border-radius: 4px;
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 1000;
+      display: none;
+    `;
+    
+    const updateDropdown = () => {
+      const suggestions = getSuggestions(input.value);
+      dropdown.innerHTML = '';
+      
+      if (suggestions.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+      }
+      
+      suggestions.forEach(suggestion => {
+        const item = document.createElement('div');
+        item.className = 'attn-autocomplete-item';
+        item.textContent = suggestion;
+        item.style.cssText = `
+          padding: 8px 12px;
+          cursor: pointer;
+          border-bottom: 1px solid var(--background-modifier-border-hover);
+        `;
+        
+        item.addEventListener('mouseenter', () => {
+          item.style.backgroundColor = 'var(--background-modifier-hover)';
+        });
+        
+        item.addEventListener('mouseleave', () => {
+          item.style.backgroundColor = '';
+        });
+        
+        item.addEventListener('click', () => {
+          input.value = suggestion;
+          input.dispatchEvent(new Event('input'));
+          dropdown.style.display = 'none';
+        });
+        
+        dropdown.appendChild(item);
+      });
+      
+      dropdown.style.display = 'block';
+    };
+    
+    input.addEventListener('input', updateDropdown);
+    input.addEventListener('focus', updateDropdown);
+    
+    input.addEventListener('blur', () => {
+      // Delay hiding to allow click on dropdown items
+      setTimeout(() => {
+        dropdown.style.display = 'none';
+      }, 150);
+    });
+    
+    return dropdown;
+  }
+}
+
+// Modal classes for file and folder selection
+// Only define these classes if SuggestModal is available (not in test environment)
+let FolderSuggestModal: any;
+let FileSuggestModal: any;
+
+if (typeof SuggestModal !== 'undefined') {
+  FolderSuggestModal = class extends SuggestModal<string> {
+    private folders: string[];
+    public onChoose: (folder: string) => void = () => {};
+
+    constructor(app: App, folders: string[]) {
+      super(app);
+      this.folders = folders;
+      this.setPlaceholder('Type to search folders...');
+    }
+
+    getSuggestions(query: string): string[] {
+      return this.folders.filter(folder =>
+        folder.toLowerCase().includes(query.toLowerCase())
+      ).slice(0, 10);
+    }
+
+    renderSuggestion(folder: string, el: HTMLElement) {
+      el.createEl('div', { text: folder || '/' });
+    }
+
+    onChooseSuggestion(folder: string) {
+      this.onChoose(folder);
+      this.close();
+    }
+  };
+
+  FileSuggestModal = class extends SuggestModal<string> {
+    private files: string[];
+    public onChoose: (file: string) => void = () => {};
+
+    constructor(app: App, files: string[]) {
+      super(app);
+      this.files = files;
+      this.setPlaceholder('Type to search template files...');
+    }
+
+    getSuggestions(query: string): string[] {
+      return this.files.filter(file =>
+        file.toLowerCase().includes(query.toLowerCase())
+      ).slice(0, 10);
+    }
+
+    renderSuggestion(file: string, el: HTMLElement) {
+      el.createEl('div', { text: file });
+    }
+
+    onChooseSuggestion(file: string) {
+      this.onChoose(file);
+      this.close();
+    }
+  };
+} else {
+  // Fallback for test environment
+  FolderSuggestModal = class {
+    public onChoose: (folder: string) => void = () => {};
+    constructor(app: App, folders: string[]) {}
+    open() {}
+  };
+
+  FileSuggestModal = class {
+    public onChoose: (file: string) => void = () => {};
+    constructor(app: App, files: string[]) {}
+    open() {}
+  };
 }

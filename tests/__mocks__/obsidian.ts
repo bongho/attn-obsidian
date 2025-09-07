@@ -53,11 +53,16 @@ export class Setting {
   setName = jest.fn().mockReturnThis();
   setDesc = jest.fn().mockReturnThis();
   addText = jest.fn().mockReturnThis();
+  addButton = jest.fn().mockReturnThis();
+  addDropdown = jest.fn().mockReturnThis();
+  addToggle = jest.fn().mockReturnThis();
+  addTextArea = jest.fn().mockReturnThis();
 }
 
 export class Notice {
   constructor(message: string, timeout?: number) {}
   hide = jest.fn();
+  setMessage = jest.fn();
 }
 
 export class TFile {
@@ -82,6 +87,21 @@ export class Vault {
 
 export class Component {}
 
+export class SuggestModal<T> {
+  app: App;
+  
+  constructor(app: App) {
+    this.app = app;
+  }
+  
+  setPlaceholder = jest.fn();
+  open = jest.fn();
+  close = jest.fn();
+  getSuggestions = jest.fn();
+  renderSuggestion = jest.fn();
+  onChooseSuggestion = jest.fn();
+}
+
 export default {
   App,
   Plugin,
@@ -91,4 +111,5 @@ export default {
   TFile,
   Vault,
   Component,
+  SuggestModal,
 };

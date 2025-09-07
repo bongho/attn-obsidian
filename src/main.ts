@@ -9,15 +9,26 @@ import { AudioProcessor } from './audioProcessor';
 import { TemplateLoader } from './templateLoader';
 
 const DEFAULT_SETTINGS: ATTNSettings = {
-  openaiApiKey: '',
+  openaiApiKey: '', // Legacy field for backward compatibility
   saveFolderPath: '/',
   noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
   noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
   noteContentTemplateFile: '',
   useTemplateFile: false,
-  systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items.',
+  systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items. Please prefer Korean for the summary.',
   audioSpeedMultiplier: 1,
-  ffmpegPath: ''
+  ffmpegPath: '',
+  stt: {
+    provider: 'openai',
+    model: 'whisper-1',
+    language: 'ko',
+    whisperBackend: 'faster-whisper-cpp',
+    whisperModelPathOrName: 'base'
+  },
+  summary: {
+    provider: 'openai',
+    model: 'gpt-4'
+  }
 };
 
 export default class ATTNPlugin extends Plugin {
@@ -51,7 +62,80 @@ export default class ATTNPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loadedData = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData);
+    
+    // Migration logic for backward compatibility
+    await this.migrateSettings(loadedData);
+  }
+
+  private async migrateSettings(loadedData: any) {
+    let needsSave = false;
+
+    // If old openaiApiKey exists but new structure doesn't, migrate it
+    if (loadedData?.openaiApiKey && 
+        (!loadedData.stt || !loadedData.summary)) {
+      
+      // Migrate STT settings
+      if (!this.settings.stt.apiKey && loadedData.openaiApiKey) {
+        this.settings.stt.apiKey = loadedData.openaiApiKey;
+        needsSave = true;
+      }
+      
+      // Migrate Summary settings  
+      if (!this.settings.summary.apiKey && loadedData.openaiApiKey) {
+        this.settings.summary.apiKey = loadedData.openaiApiKey;
+        needsSave = true;
+      }
+    }
+
+    if (needsSave) {
+      await this.saveSettings();
+    }
+  }
+
+  private validateApiKeys(): boolean {
+    const configApiKey = this.configLoader.getOpenAIApiKey();
+    
+    // Check STT provider requirements
+    if (this.settings.stt.provider === 'openai' || this.settings.stt.provider === 'gemini') {
+      const sttApiKey = this.settings.stt.apiKey || this.settings.openaiApiKey || configApiKey;
+      if (!sttApiKey || sttApiKey.trim() === '') {
+        new Notice(`${this.settings.stt.provider.toUpperCase()} STT API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.`);
+        console.error(`${this.settings.stt.provider.toUpperCase()} STT API 키가 설정되지 않았습니다.`);
+        return false;
+      }
+    }
+
+    // Check local whisper requirements
+    if (this.settings.stt.provider === 'local-whisper') {
+      if (!this.settings.stt.ollamaEndpoint && !this.settings.stt.whisperBinaryPath) {
+        new Notice('Local Whisper 사용을 위해서는 Ollama 엔드포인트 또는 Whisper 바이너리 경로를 설정해주세요.');
+        console.error('Local Whisper 설정이 완료되지 않았습니다.');
+        return false;
+      }
+    }
+
+    // Check Summary provider requirements
+    if (this.settings.summary.provider === 'openai' || this.settings.summary.provider === 'gemini') {
+      const summaryApiKey = this.settings.summary.apiKey || this.settings.openaiApiKey || configApiKey;
+      if (!summaryApiKey || summaryApiKey.trim() === '') {
+        new Notice(`${this.settings.summary.provider.toUpperCase()} Summary API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.`);
+        console.error(`${this.settings.summary.provider.toUpperCase()} Summary API 키가 설정되지 않았습니다.`);
+        return false;
+      }
+    }
+
+    // Check local LLM requirements
+    if (this.settings.summary.provider === 'local-llm') {
+      if (!this.settings.summary.ollamaEndpoint) {
+        new Notice('Local LLM 사용을 위해서는 Ollama 엔드포인트를 설정해주세요.');
+        console.error('Local LLM 설정이 완료되지 않았습니다.');
+        return false;
+      }
+    }
+
+    return true;
   }
 
   async saveSettings() {
@@ -60,14 +144,11 @@ export default class ATTNPlugin extends Plugin {
 
   async processAudioFile(file: TFile) {
     try {
-      // Check if API key is configured (from config file or settings)
-      const configApiKey = this.configLoader.getOpenAIApiKey();
-      const finalApiKey = configApiKey || this.settings.openaiApiKey;
+      // Check if required API keys are configured based on provider selection
+      const hasRequiredKeys = this.validateApiKeys();
       
-      if (!finalApiKey || finalApiKey.trim() === '') {
-        new Notice('OpenAI API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
-        console.error('API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
-        return;
+      if (!hasRequiredKeys) {
+        return; // validateApiKeys will show appropriate error notice
       }
 
       if (this.configLoader.isDebugMode()) {
@@ -105,9 +186,9 @@ export default class ATTNPlugin extends Plugin {
         }
       }
 
-      // Step 3: Process with API service
+      // Step 3: Process with API service using new provider system
       processingNotice.setMessage('음성 인식 및 요약 생성 중...');
-      const apiService = new ApiService(finalApiKey);
+      const apiService = new ApiService(this.settings);
       const result = await apiService.processAudioFile(audioFile, this.settings.systemPrompt);
 
       // Step 4: Prepare template data
