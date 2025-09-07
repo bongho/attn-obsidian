@@ -65,19 +65,9 @@
 
 ### 수동 설치
 
-```bash
-# 1. 릴리스에서 다운로드
-cd {VaultFolder}/.obsidian/plugins/
-git clone https://github.com/bongho/attn-obsidian.git
-cd attn-obsidian
-
-# 2. 의존성 설치 및 빌드
-npm install
-npm run build
-
-# 3. Obsidian 재시작 후 플러그인 활성화
-```
-
+- manifest.json, main.js, scripts, src directory를 다운로드 받아 Obsidian Plugin Directory에 임의 디렉토리 생성 이후에 넣어줍니다.
+- Obsidian Plugin 에서 Reload Plugin 버튼을 클릭하면 Audio To Tiled Note Plugin을 찾을 수 있습니다.
+  
 ## ⚙️ 초기 설정
 
 1. **OpenAI API 키 획득**
