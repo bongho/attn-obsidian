@@ -65,8 +65,41 @@
 
 ### 수동 설치
 
-- manifest.json, main.js, scripts, src directory를 다운로드 받아 Obsidian Plugin Directory에 임의 디렉토리 생성 이후에 넣어줍니다.
-- Obsidian Plugin 에서 Reload Plugin 버튼을 클릭하면 Audio To Tiled Note Plugin을 찾을 수 있습니다.
+#### 1. 필요한 파일 다운로드
+[GitHub 릴리스 페이지](https://github.com/bongho/attn-obsidian/releases)에서 최신 버전의 다음 파일들을 다운로드하세요:
+- `manifest.json`
+- `main.js` 
+- `styles.css` (있는 경우)
+
+또는 전체 소스를 원하는 경우:
+- `scripts/` 디렉토리
+- `src/` 디렉토리 
+
+#### 2. 플러그인 폴더 생성 및 파일 복사
+
+1. **Obsidian 볼트의 플러그인 디렉토리 찾기:**
+   ```
+   [볼트 경로]/.obsidian/plugins/
+   ```
+
+2. **새 플러그인 폴더 생성:**
+   ```
+   [볼트 경로]/.obsidian/plugins/audio-to-tidied-notes/
+   ```
+
+3. **다운로드한 파일들을 새로 생성한 폴더에 복사**
+
+#### 3. 플러그인 활성화
+
+1. **Obsidian 설정** → **Community plugins** 이동
+2. **"Reload plugins"** 버튼 클릭 (또는 Obsidian 재시작)
+3. 플러그인 목록에서 **"Audio To Tidied Notes"** 찾기
+4. **활성화** 토글을 ON으로 설정
+
+#### 4. 설정 완료 확인
+
+- 활성화 후 우측 설정에서 **"Audio To Tidied Notes"** 설정 탭이 나타나는지 확인
+- M4A 파일을 우클릭했을 때 **"ATTN: 요약 노트 생성하기"** 메뉴가 나타나는지 확인
   
 ## ⚙️ 초기 설정
 
