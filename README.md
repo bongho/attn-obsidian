@@ -57,13 +57,7 @@
 
 ## 📦 설치 방법
 
-### Obsidian Community Plugins에서 설치 (권장)
-
-1. Obsidian 설정 → Community Plugins 이동
-2. "Audio To Tidied Notes" 검색
-3. 설치 및 활성화
-
-### 수동 설치
+### 수동 설치(현재 가능한 방법)
 
 #### 1. 필요한 파일 다운로드
 [GitHub 릴리스 페이지](https://github.com/bongho/attn-obsidian/releases)에서 최신 버전의 다음 파일들을 다운로드하세요:
