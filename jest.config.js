@@ -6,6 +6,16 @@ module.exports = {
   transform: {
     '^.+\\.ts$': 'ts-jest',
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(uuid|other-esm-modules)/)',
+  ],
+  globals: {
+    'ts-jest': {
+      tsconfig: {
+        allowSyntheticDefaultImports: true,
+      },
+    },
+  },
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',

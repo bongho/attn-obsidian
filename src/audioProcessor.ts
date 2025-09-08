@@ -3,7 +3,12 @@ import { promisify } from 'util';
 import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { AudioSpeedOption } from './types';
+import { v4 as uuidv4 } from 'uuid';
+import { AudioSpeedOption, ATTNSettings, VerboseTranscriptionResult, SegmentResult, SegmentOptions } from './types';
+import { AudioSegmenter } from './audioSegmenter';
+import { Logger, LogContext } from './logger';
+import { ApiService } from './apiService';
+import { SpeakerDiarizationService } from './speakerDiarization';
 
 const execAsync = promisify(exec);
 
@@ -11,11 +16,18 @@ export class AudioProcessor {
   private tempDir: string;
   private ffmpegPath: string | null = null;
   private userFfmpegPath: string;
+  private diarizationService?: SpeakerDiarizationService;
 
   constructor(userFfmpegPath: string = '') {
     // Use OS temp directory instead of process.cwd() to avoid permission issues in Obsidian
     this.tempDir = join(tmpdir(), 'attn-audio-processing');
     this.userFfmpegPath = userFfmpegPath;
+  }
+
+  private initializeDiarizationService(settings: ATTNSettings): void {
+    if (settings.processing.diarization?.enabled && !this.diarizationService) {
+      this.diarizationService = new SpeakerDiarizationService(settings.processing.diarization);
+    }
   }
 
   async processAudioSpeed(audioFile: File, speedMultiplier: AudioSpeedOption): Promise<File> {
@@ -129,5 +141,344 @@ export class AudioProcessor {
     } catch (error) {
       return false;
     }
+  }
+
+  async transcribeWithRetry(audioFile: File, settings: ATTNSettings): Promise<VerboseTranscriptionResult> {
+    const requestId = uuidv4();
+    const logger = new Logger(settings.logging);
+    const apiService = new ApiService(settings);
+    
+    // Initialize diarization service if needed
+    this.initializeDiarizationService(settings);
+    
+    const logContext: LogContext = {
+      requestId,
+      provider: settings.stt.provider,
+      model: settings.stt.model,
+      filePath: audioFile.name,
+      durationSec: this.estimateFileDuration(audioFile.size),
+      sizeBytes: audioFile.size
+    };
+
+    // Check if file exceeds size limits and chunking is enabled
+    const maxSizeMB = settings.processing.maxUploadSizeMB || 24.5;
+    const maxSizeBytes = maxSizeMB * 1024 * 1024;
+    
+    if (audioFile.size > maxSizeBytes && settings.processing.enableChunking) {
+      await logger.log('info', { ...logContext, message: 'File size exceeds limit, using chunking' });
+      return this.transcribeWithChunking(audioFile, settings);
+    }
+
+    // Attempt direct transcription with retry logic
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await apiService.transcribeAudio(audioFile, { format: 'verbose_json' });
+        
+        // Apply speaker diarization if enabled
+        if (this.diarizationService) {
+          return await this.diarizationService.enhanceTranscriptionWithSpeakers(result, audioFile);
+        }
+        
+        return result;
+        
+      } catch (error) {
+        const errorStatus = (error as any).status || (error as any).response?.status;
+        const errorMessage = (error as any).message || String(error);
+        const errorCode = (error as any).code;
+
+        // Handle 400 errors (file too large, duration too long)
+        if (errorStatus === 400) {
+          if (settings.processing.enableChunking && this.is400FileLimit(errorMessage)) {
+            await logger.logError({
+              ...logContext,
+              status: errorStatus,
+              responseBody: (error as any).response?.data
+            }, error);
+
+            await logger.log('info', { 
+              ...logContext, 
+              message: 'Received 400 error for file size/duration, retrying with chunking' 
+            });
+            
+            return this.transcribeWithChunking(audioFile, settings);
+          } else {
+            const enhancedMessage = settings.processing.enableChunking 
+              ? errorMessage
+              : `${errorMessage}. You can enable chunking in Processing settings to handle large files automatically.`;
+            
+            await logger.logError({
+              ...logContext,
+              status: errorStatus,
+              responseBody: (error as any).response?.data
+            }, new Error(enhancedMessage));
+            
+            throw new Error(enhancedMessage);
+          }
+        }
+
+        // Handle network/server errors with retry
+        if (this.shouldRetry(errorStatus, errorCode) && attempt < maxRetries) {
+          const delayMs = Math.min(500 * Math.pow(2, attempt - 1), 2000); // Exponential backoff: 500ms, 1s, 2s
+          
+          await logger.log('warn', {
+            ...logContext,
+            message: `Network error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`,
+            attempt,
+            status: errorStatus,
+            errorCode,
+            errorMessage
+          });
+
+          await this.sleep(delayMs);
+          continue;
+        }
+
+        // Final attempt failed or non-retryable error
+        await logger.logError({
+          ...logContext,
+          status: errorStatus,
+          responseBody: (error as any).response?.data
+        }, error);
+        
+        throw error;
+      }
+    }
+
+    throw new Error('Retry logic error - should not reach here');
+  }
+
+  async transcribeWithChunking(audioFile: File, settings: ATTNSettings): Promise<VerboseTranscriptionResult> {
+    const requestId = uuidv4();
+    const logger = new Logger(settings.logging);
+    const apiService = new ApiService(settings);
+    const segmenter = new AudioSegmenter(this.userFfmpegPath);
+    
+    // Initialize diarization service if needed
+    this.initializeDiarizationService(settings);
+    
+    const logContext: LogContext = {
+      requestId,
+      provider: settings.stt.provider,
+      model: settings.stt.model,
+      filePath: audioFile.name,
+      durationSec: this.estimateFileDuration(audioFile.size),
+      sizeBytes: audioFile.size
+    };
+
+    try {
+      // Segment the audio file
+      const segmentOptions: SegmentOptions = {
+        maxUploadSizeMB: settings.processing.maxUploadSizeMB,
+        maxChunkDurationSec: settings.processing.maxChunkDurationSec,
+        targetSampleRateHz: settings.processing.targetSampleRateHz,
+        targetChannels: settings.processing.targetChannels,
+        silenceThresholdDb: settings.processing.silenceThresholdDb,
+        minSilenceMs: settings.processing.minSilenceMs,
+        hardSplitWindowSec: settings.processing.hardSplitWindowSec,
+        preserveIntermediates: settings.processing.preserveIntermediates,
+        enablePreprocessing: true, // Enable audio preprocessing for better results
+        audioCodec: 'aac',
+        audioBitrate: '128k'
+      };
+
+      const segments = await segmenter.segmentAudio(audioFile, segmentOptions);
+      
+      // Validate segments have consistent timeline
+      this.validateSegmentTimeline(segments);
+      
+      await logger.log('info', {
+        ...logContext,
+        message: `Segmented audio into ${segments.length} chunks`,
+        chunkCount: segments.length
+      });
+
+      // Process each segment
+      const chunkResults: VerboseTranscriptionResult[] = [];
+      for (let i = 0; i < segments.length; i++) {
+        const segment = segments[i];
+        const chunkLogContext = {
+          ...logContext,
+          chunkIndex: i,
+          chunkCount: segments.length,
+          durationSec: segment.endSec - segment.startSec,
+          sizeBytes: segment.sizeBytes
+        };
+
+        try {
+          // Convert segment to File object for API
+          const chunkFile = await this.segmentToFile(segment, `${audioFile.name}_chunk_${i}`);
+          
+          // Transcribe chunk with simple retry (no chunking recursion)
+          const chunkResult = await this.transcribeChunkWithRetry(chunkFile, apiService, chunkLogContext, logger);
+          chunkResults.push(chunkResult);
+          
+          await logger.log('info', {
+            ...chunkLogContext,
+            message: `Successfully transcribed chunk ${i + 1}/${segments.length}`
+          });
+
+        } catch (error) {
+          await logger.logError(chunkLogContext, error);
+          throw new Error(`Failed to transcribe chunk ${i}: ${(error as Error).message}`);
+        }
+      }
+
+      // Merge results with timeline correction
+      let mergedResult = this.mergeVerboseResults(chunkResults, segments);
+      
+      // Apply speaker diarization to the complete merged result if enabled
+      if (this.diarizationService) {
+        mergedResult = await this.diarizationService.enhanceTranscriptionWithSpeakers(mergedResult, audioFile);
+        
+        await logger.log('info', {
+          ...logContext,
+          message: 'Applied speaker diarization to merged result',
+          speakerCount: mergedResult.speakers?.length || 0
+        });
+      }
+      
+      await logger.log('info', {
+        ...logContext,
+        message: 'Successfully merged all chunks',
+        finalDuration: mergedResult.duration,
+        totalSegments: mergedResult.segments.length,
+        speakerCount: mergedResult.speakers?.length || 0
+      });
+
+      return mergedResult;
+      
+    } catch (error) {
+      await logger.logError({
+        ...logContext
+      }, error);
+      throw error;
+    }
+  }
+
+  mergeVerboseResults(chunkResults: VerboseTranscriptionResult[], segments: SegmentResult[]): VerboseTranscriptionResult {
+    const combinedText = chunkResults.map(result => result.text).join(' ');
+    const combinedSegments = [];
+    const rawChunks = [];
+    
+    let segmentId = 0;
+    for (let i = 0; i < chunkResults.length; i++) {
+      const chunkResult = chunkResults[i];
+      const segmentOffset = segments[i].startSec;
+      
+      // Collect raw data
+      if (chunkResult.raw) {
+        rawChunks.push(chunkResult.raw);
+      }
+      
+      // Merge segments with timeline offset
+      if (chunkResult.segments) {
+        for (const segment of chunkResult.segments) {
+          combinedSegments.push({
+            id: segmentId++,
+            start: segment.start + segmentOffset,
+            end: segment.end + segmentOffset,
+            text: segment.text,
+            words: segment.words?.map(word => ({
+              start: word.start + segmentOffset,
+              end: word.end + segmentOffset,
+              word: word.word
+            }))
+          });
+        }
+      }
+    }
+
+    return {
+      text: combinedText,
+      language: chunkResults[0]?.language,
+      duration: segments[segments.length - 1]?.endSec || 0,
+      segments: combinedSegments,
+      raw: { chunks: rawChunks }
+    };
+  }
+
+  private validateSegmentTimeline(segments: SegmentResult[]): void {
+    for (let i = 1; i < segments.length; i++) {
+      const prevEnd = segments[i - 1].endSec;
+      const currentStart = segments[i].startSec;
+      
+      if (Math.abs(currentStart - prevEnd) > 1.0) { // Allow 1 second tolerance
+        throw new Error(`Timeline gap detected between segments ${i - 1} and ${i}: ${prevEnd}s to ${currentStart}s`);
+      }
+    }
+  }
+
+  private async segmentToFile(segment: SegmentResult, filename: string): Promise<File> {
+    if (Buffer.isBuffer(segment.bufferOrPath)) {
+      return new File([segment.bufferOrPath], filename, { type: 'audio/m4a' });
+    } else {
+      // For file path, read the file - this is a stub implementation
+      const fs = require('fs');
+      const buffer = fs.readFileSync(segment.bufferOrPath);
+      return new File([buffer], filename, { type: 'audio/m4a' });
+    }
+  }
+
+  private async transcribeChunkWithRetry(
+    chunkFile: File, 
+    apiService: ApiService, 
+    logContext: LogContext, 
+    logger: Logger
+  ): Promise<VerboseTranscriptionResult> {
+    const maxRetries = 2;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await apiService.transcribeAudio(chunkFile, { format: 'verbose_json' });
+      } catch (error) {
+        const errorStatus = (error as any).status || (error as any).response?.status;
+        const errorCode = (error as any).code;
+        
+        if (this.shouldRetry(errorStatus, errorCode) && attempt < maxRetries) {
+          const delayMs = 500 * attempt; // Simple linear backoff for chunks
+          await logger.log('warn', {
+            ...logContext,
+            message: `Chunk transcription failed, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`,
+            attempt,
+            status: errorStatus,
+            errorCode
+          });
+          
+          await this.sleep(delayMs);
+          continue;
+        }
+        
+        throw error;
+      }
+    }
+    
+    throw new Error('Chunk retry logic error');
+  }
+
+  private is400FileLimit(errorMessage: string): boolean {
+    const fileLimitKeywords = ['file too large', 'file is too large', 'audio too long', 'exceeds', 'limit', 'maximum'];
+    const lowerMessage = errorMessage.toLowerCase();
+    return fileLimitKeywords.some(keyword => lowerMessage.includes(keyword));
+  }
+
+  private shouldRetry(status?: number, code?: string): boolean {
+    // Retry on network errors and 5xx server errors
+    if (code && ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNREFUSED'].includes(code)) {
+      return true;
+    }
+    if (status && status >= 500 && status < 600) {
+      return true;
+    }
+    return false;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private estimateFileDuration(sizeBytes: number): number {
+    // Rough estimate: ~1MB per minute for compressed audio
+    return (sizeBytes / (1024 * 1024)) * 60;
   }
 }

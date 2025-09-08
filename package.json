@@ -38,8 +38,10 @@
     "typescript": "5.2.2"
   },
   "dependencies": {
+    "@types/uuid": "^10.0.0",
     "jsdom": "^26.1.0",
     "moment": "^2.30.1",
-    "openai": "^4.20.0"
+    "openai": "^4.20.0",
+    "uuid": "^12.0.0"
   }
 }

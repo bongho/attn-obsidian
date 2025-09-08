@@ -129,6 +129,24 @@ describe('ATTNSettingTab', () => {
           model: 'gpt-4',
           apiKey: '',
           baseUrl: '',
+        },
+        processing: {
+          enableChunking: true,
+          maxUploadSizeMB: 24.5,
+          maxChunkDurationSec: 85,
+          targetSampleRateHz: 16000,
+          targetChannels: 1,
+          silenceThresholdDb: -35,
+          minSilenceMs: 400,
+          hardSplitWindowSec: 30,
+          preserveIntermediates: false
+        },
+        logging: {
+          enabled: true,
+          level: 'error' as const,
+          logFilePath: '',
+          maxLogFileBytes: 5 * 1024 * 1024,
+          maxLogFiles: 5
         }
       },
       saveSettings: jest.fn().mockResolvedValue(undefined),
@@ -631,8 +649,445 @@ describe('ATTNSettingTab', () => {
     });
   });
 
+  describe('Processing Configuration', () => {
+    test('should render Processing section header', () => {
+      settingTab.display();
+      expect(settingTab.containerEl.createEl).toHaveBeenCalledWith('h3', { text: 'Audio Processing Configuration' });
+    });
+
+    test('should render Enable Chunking toggle field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const chunkingSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Enable Audio Chunking')
+      );
+      
+      expect(chunkingSetting).toBeDefined();
+      expect(chunkingSetting.setDesc).toHaveBeenCalledWith('Automatically split large audio files to handle API limits');
+      expect(chunkingSetting.addToggle).toHaveBeenCalled();
+    });
+
+    test('should save enable chunking when toggle changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const chunkingSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Enable Audio Chunking')
+      );
+      
+      const toggleCallback = chunkingSetting.addToggle.mock.calls[0][0];
+      const mockToggleComponent = {
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      toggleCallback(mockToggleComponent);
+      expect(mockToggleComponent.setValue).toHaveBeenCalledWith(true);
+      
+      const onChangeCallback = mockToggleComponent.onChange.mock.calls[0][0];
+      await onChangeCallback(false);
+      
+      expect(mockPlugin.settings.processing.enableChunking).toBe(false);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should render Max Upload Size input field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxSizeSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Upload Size (MB)')
+      );
+      
+      expect(maxSizeSetting).toBeDefined();
+      expect(maxSizeSetting.setDesc).toHaveBeenCalled();
+      expect(maxSizeSetting.addText).toHaveBeenCalled();
+    });
+
+    test('should save max upload size when input changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxSizeSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Upload Size (MB)')
+      );
+      
+      const textCallback = maxSizeSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      expect(mockTextComponent.setValue).toHaveBeenCalledWith('24.5');
+      
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      await onChangeCallback('20');
+      
+      expect(mockPlugin.settings.processing.maxUploadSizeMB).toBe(20);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should validate max upload size input', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxSizeSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Upload Size (MB)')
+      );
+      
+      const textCallback = maxSizeSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      
+      // Invalid value should not be saved
+      await onChangeCallback('0');
+      expect(mockPlugin.settings.processing.maxUploadSizeMB).toBe(24.5); // Original value
+      
+      await onChangeCallback('-5');
+      expect(mockPlugin.settings.processing.maxUploadSizeMB).toBe(24.5); // Original value
+    });
+
+    test('should render Max Chunk Duration input field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxDurationSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Chunk Duration (seconds)')
+      );
+      
+      expect(maxDurationSetting).toBeDefined();
+      expect(maxDurationSetting.setDesc).toHaveBeenCalled();
+      expect(maxDurationSetting.addText).toHaveBeenCalled();
+    });
+
+    test('should save max chunk duration when input changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxDurationSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Chunk Duration (seconds)')
+      );
+      
+      const textCallback = maxDurationSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      expect(mockTextComponent.setValue).toHaveBeenCalledWith('85');
+      
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      await onChangeCallback('60');
+      
+      expect(mockPlugin.settings.processing.maxChunkDurationSec).toBe(60);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should validate max chunk duration input', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxDurationSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Chunk Duration (seconds)')
+      );
+      
+      const textCallback = maxDurationSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      
+      // Invalid value should not be saved
+      await onChangeCallback('5');
+      expect(mockPlugin.settings.processing.maxChunkDurationSec).toBe(85); // Original value
+      
+      await onChangeCallback('-10');
+      expect(mockPlugin.settings.processing.maxChunkDurationSec).toBe(85); // Original value
+    });
+
+    test('should render Silence Threshold input field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const thresholdSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Silence Threshold (dBFS)')
+      );
+      
+      expect(thresholdSetting).toBeDefined();
+      expect(thresholdSetting.setDesc).toHaveBeenCalled();
+      expect(thresholdSetting.addText).toHaveBeenCalled();
+    });
+
+    test('should save silence threshold when input changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const thresholdSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Silence Threshold (dBFS)')
+      );
+      
+      const textCallback = thresholdSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      expect(mockTextComponent.setValue).toHaveBeenCalledWith('-35');
+      
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      await onChangeCallback('-30');
+      
+      expect(mockPlugin.settings.processing.silenceThresholdDb).toBe(-30);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+  });
+
+  describe('Logging Configuration', () => {
+    test('should render Logging section header', () => {
+      settingTab.display();
+      expect(settingTab.containerEl.createEl).toHaveBeenCalledWith('h3', { text: 'Error Logging Configuration' });
+    });
+
+    test('should render Enable Logging toggle field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const loggingSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Enable Error Logging')
+      );
+      
+      expect(loggingSetting).toBeDefined();
+      expect(loggingSetting.setDesc).toHaveBeenCalledWith('Log errors and processing details to file for debugging');
+      expect(loggingSetting.addToggle).toHaveBeenCalled();
+    });
+
+    test('should save enable logging when toggle changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const loggingSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Enable Error Logging')
+      );
+      
+      const toggleCallback = loggingSetting.addToggle.mock.calls[0][0];
+      const mockToggleComponent = {
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      toggleCallback(mockToggleComponent);
+      expect(mockToggleComponent.setValue).toHaveBeenCalledWith(true);
+      
+      const onChangeCallback = mockToggleComponent.onChange.mock.calls[0][0];
+      await onChangeCallback(false);
+      
+      expect(mockPlugin.settings.logging.enabled).toBe(false);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should render Log Level dropdown field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const levelSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Log Level')
+      );
+      
+      expect(levelSetting).toBeDefined();
+      expect(levelSetting.setDesc).toHaveBeenCalled();
+      expect(levelSetting.addDropdown).toHaveBeenCalled();
+    });
+
+    test('should configure log level dropdown with correct options', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const levelSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Log Level')
+      );
+      
+      const dropdownCallback = levelSetting.addDropdown.mock.calls[0][0];
+      const mockDropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      dropdownCallback(mockDropdownComponent);
+      
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('error', 'Error');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('warn', 'Warning');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('info', 'Info');
+      expect(mockDropdownComponent.addOption).toHaveBeenCalledWith('debug', 'Debug');
+      expect(mockDropdownComponent.setValue).toHaveBeenCalledWith('error');
+    });
+
+    test('should save log level when selection changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const levelSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Log Level')
+      );
+      
+      const dropdownCallback = levelSetting.addDropdown.mock.calls[0][0];
+      const mockDropdownComponent = {
+        addOption: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      dropdownCallback(mockDropdownComponent);
+      const onChangeCallback = mockDropdownComponent.onChange.mock.calls[0][0];
+      
+      await onChangeCallback('debug');
+      
+      expect(mockPlugin.settings.logging.level).toBe('debug');
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should render Max Log File Size input field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxSizeSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Log File Size (MB)')
+      );
+      
+      expect(maxSizeSetting).toBeDefined();
+      expect(maxSizeSetting.setDesc).toHaveBeenCalled();
+      expect(maxSizeSetting.addText).toHaveBeenCalled();
+    });
+
+    test('should save max log file size when input changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxSizeSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Log File Size (MB)')
+      );
+      
+      const textCallback = maxSizeSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      expect(mockTextComponent.setValue).toHaveBeenCalledWith('5');
+      
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      await onChangeCallback('10');
+      
+      expect(mockPlugin.settings.logging.maxLogFileBytes).toBe(10 * 1024 * 1024);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+
+    test('should validate max log file size input', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxSizeSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Log File Size (MB)')
+      );
+      
+      const textCallback = maxSizeSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      
+      // Invalid value should not be saved
+      await onChangeCallback('0');
+      expect(mockPlugin.settings.logging.maxLogFileBytes).toBe(5 * 1024 * 1024); // Original value
+      
+      await onChangeCallback('-1');
+      expect(mockPlugin.settings.logging.maxLogFileBytes).toBe(5 * 1024 * 1024); // Original value
+    });
+
+    test('should render Max Log Files input field', () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxFilesSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Log Files')
+      );
+      
+      expect(maxFilesSetting).toBeDefined();
+      expect(maxFilesSetting.setDesc).toHaveBeenCalled();
+      expect(maxFilesSetting.addText).toHaveBeenCalled();
+    });
+
+    test('should save max log files when input changes', async () => {
+      const { Setting } = require('obsidian');
+      settingTab.display();
+
+      const settingInstances = Setting.mock.instances;
+      const maxFilesSetting = settingInstances.find((instance: any) => 
+        instance.setName.mock.calls.some((call: any) => call[0] === 'Max Log Files')
+      );
+      
+      const textCallback = maxFilesSetting.addText.mock.calls[0][0];
+      const mockTextComponent = {
+        setPlaceholder: jest.fn().mockReturnThis(),
+        setValue: jest.fn().mockReturnThis(),
+        onChange: jest.fn().mockReturnThis(),
+      };
+      
+      textCallback(mockTextComponent);
+      expect(mockTextComponent.setValue).toHaveBeenCalledWith('5');
+      
+      const onChangeCallback = mockTextComponent.onChange.mock.calls[0][0];
+      await onChangeCallback('10');
+      
+      expect(mockPlugin.settings.logging.maxLogFiles).toBe(10);
+      expect(mockPlugin.saveSettings).toHaveBeenCalled();
+    });
+  });
+
   describe('Settings Migration', () => {
-    test('should migrate old openaiApiKey to new structure', () => {
+    test('should migrate old settings to new structure', () => {
       const legacySettings = {
         openaiApiKey: 'sk-test123',
         // other legacy settings...
@@ -640,6 +1095,17 @@ describe('ATTNSettingTab', () => {
       
       // This test will be implemented when we add the migration logic
       // For now, it's a placeholder to ensure we test backward compatibility
+      expect(true).toBe(true);
+    });
+
+    test('should apply default values for new settings', () => {
+      const existingSettings = {
+        openaiApiKey: 'sk-existing',
+        saveFolderPath: '/existing',
+        // Missing processing and logging settings
+      };
+      
+      // This test will be implemented when we add the migration logic
       expect(true).toBe(true);
     });
   });

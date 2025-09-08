@@ -1,5 +1,5 @@
 import { App, PluginSettingTab, Setting, Notice, SuggestModal } from 'obsidian';
-import { ATTNSettings, SttProvider, SummaryProvider, WhisperBackend } from './types';
+import { ATTNSettings, SttProvider, SummaryProvider, WhisperBackend, ProcessingSettings, LoggingSettings, DiarizationSettings } from './types';
 import ATTNPlugin from './main';
 import { AudioProcessor } from './audioProcessor';
 import { TemplateLoader } from './templateLoader';
@@ -313,6 +313,320 @@ export class ATTNSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }));
     }
+
+    // Audio Processing Configuration Section
+    containerEl.createEl('h3', { text: 'Audio Processing Configuration' });
+
+    new Setting(containerEl)
+      .setName('Enable Audio Chunking')
+      .setDesc('Automatically split large audio files to handle API limits')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.processing.enableChunking)
+        .onChange(async (value) => {
+          this.plugin.settings.processing.enableChunking = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Max Upload Size (MB)')
+      .setDesc('Maximum file size before automatic chunking (leave empty for provider defaults)')
+      .addText(text => text
+        .setPlaceholder('24.5')
+        .setValue(this.plugin.settings.processing.maxUploadSizeMB?.toString() || '24.5')
+        .onChange(async (value) => {
+          const numValue = parseFloat(value);
+          if (!isNaN(numValue) && numValue > 0) {
+            this.plugin.settings.processing.maxUploadSizeMB = numValue;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Max Chunk Duration (seconds)')
+      .setDesc('Maximum duration per chunk to ensure processing limits')
+      .addText(text => text
+        .setPlaceholder('85')
+        .setValue(this.plugin.settings.processing.maxChunkDurationSec?.toString() || '85')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue >= 10) {
+            this.plugin.settings.processing.maxChunkDurationSec = numValue;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Silence Threshold (dBFS)')
+      .setDesc('Audio level threshold for silence detection (more negative = quieter)')
+      .addText(text => text
+        .setPlaceholder('-35')
+        .setValue(this.plugin.settings.processing.silenceThresholdDb?.toString() || '-35')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue)) {
+            this.plugin.settings.processing.silenceThresholdDb = numValue;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Minimum Silence Duration (ms)')
+      .setDesc('Minimum duration of silence to be detected as a split point')
+      .addText(text => text
+        .setPlaceholder('400')
+        .setValue(this.plugin.settings.processing.minSilenceMs?.toString() || '400')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue >= 100) {
+            this.plugin.settings.processing.minSilenceMs = numValue;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Hard Split Window (seconds)')
+      .setDesc('Force split every N seconds when no silence is found')
+      .addText(text => text
+        .setPlaceholder('30')
+        .setValue(this.plugin.settings.processing.hardSplitWindowSec?.toString() || '30')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue >= 10) {
+            this.plugin.settings.processing.hardSplitWindowSec = numValue;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Target Sample Rate (Hz)')
+      .setDesc('Resample audio to this frequency for better processing (16kHz recommended for speech)')
+      .addText(text => text
+        .setPlaceholder('16000')
+        .setValue(this.plugin.settings.processing.targetSampleRateHz?.toString() || '16000')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue >= 8000 && numValue <= 48000) {
+            this.plugin.settings.processing.targetSampleRateHz = numValue;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Target Channels')
+      .setDesc('Convert audio to mono (1) or stereo (2) for processing')
+      .addDropdown(dropdown => dropdown
+        .addOption('1', 'Mono (1 channel)')
+        .addOption('2', 'Stereo (2 channels)')
+        .setValue(this.plugin.settings.processing.targetChannels?.toString() || '1')
+        .onChange(async (value) => {
+          this.plugin.settings.processing.targetChannels = parseInt(value) as 1 | 2;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Preserve Intermediate Files')
+      .setDesc('Keep temporary audio segment files for debugging (increases disk usage)')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.processing.preserveIntermediates || false)
+        .onChange(async (value) => {
+          this.plugin.settings.processing.preserveIntermediates = value;
+          await this.plugin.saveSettings();
+        }));
+
+    // Speaker Diarization Configuration Section
+    containerEl.createEl('h3', { text: 'Speaker Diarization Configuration' });
+
+    new Setting(containerEl)
+      .setName('Enable Speaker Diarization')
+      .setDesc('Automatically identify and label different speakers in the audio')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.processing.diarization?.enabled || false)
+        .onChange(async (value) => {
+          if (!this.plugin.settings.processing.diarization) {
+            this.plugin.settings.processing.diarization = {
+              enabled: value,
+              provider: 'pyannote',
+              minSpeakers: 1,
+              maxSpeakers: 10,
+              mergeThreshold: 1.0
+            };
+          } else {
+            this.plugin.settings.processing.diarization.enabled = value;
+          }
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Diarization Provider')
+      .setDesc('Choose the speaker diarization service provider')
+      .addDropdown(dropdown => dropdown
+        .addOption('pyannote', 'Pyannote.audio (Hugging Face)')
+        .addOption('whisperx', 'WhisperX (Local/API)')
+        .addOption('local', 'Local Processing (Basic)')
+        .setValue(this.plugin.settings.processing.diarization?.provider || 'pyannote')
+        .onChange(async (value: 'pyannote' | 'whisperx' | 'local') => {
+          if (!this.plugin.settings.processing.diarization) {
+            this.plugin.settings.processing.diarization = {
+              enabled: false,
+              provider: value,
+              minSpeakers: 1,
+              maxSpeakers: 10,
+              mergeThreshold: 1.0
+            };
+          } else {
+            this.plugin.settings.processing.diarization.provider = value;
+          }
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('API Key / Access Token')
+      .setDesc('API key for Hugging Face (pyannote) or other diarization services')
+      .addText(text => text
+        .setPlaceholder('hf_...')
+        .setValue(this.plugin.settings.processing.diarization?.apiKey || '')
+        .onChange(async (value) => {
+          if (!this.plugin.settings.processing.diarization) {
+            this.plugin.settings.processing.diarization = {
+              enabled: false,
+              provider: 'pyannote',
+              minSpeakers: 1,
+              maxSpeakers: 10,
+              mergeThreshold: 1.0,
+              apiKey: value
+            };
+          } else {
+            this.plugin.settings.processing.diarization.apiKey = value;
+          }
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Minimum Speakers')
+      .setDesc('Minimum number of speakers to detect (1-10)')
+      .addText(text => text
+        .setPlaceholder('1')
+        .setValue(this.plugin.settings.processing.diarization?.minSpeakers?.toString() || '1')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue >= 1 && numValue <= 10) {
+            if (!this.plugin.settings.processing.diarization) {
+              this.plugin.settings.processing.diarization = {
+                enabled: false,
+                provider: 'pyannote',
+                minSpeakers: numValue,
+                maxSpeakers: 10,
+                mergeThreshold: 1.0
+              };
+            } else {
+              this.plugin.settings.processing.diarization.minSpeakers = numValue;
+            }
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Maximum Speakers')
+      .setDesc('Maximum number of speakers to detect (1-10)')
+      .addText(text => text
+        .setPlaceholder('10')
+        .setValue(this.plugin.settings.processing.diarization?.maxSpeakers?.toString() || '10')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue >= 1 && numValue <= 10) {
+            if (!this.plugin.settings.processing.diarization) {
+              this.plugin.settings.processing.diarization = {
+                enabled: false,
+                provider: 'pyannote',
+                minSpeakers: 1,
+                maxSpeakers: numValue,
+                mergeThreshold: 1.0
+              };
+            } else {
+              this.plugin.settings.processing.diarization.maxSpeakers = numValue;
+            }
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Speaker Merge Threshold (seconds)')
+      .setDesc('Merge consecutive segments from the same speaker if gap is smaller than this')
+      .addText(text => text
+        .setPlaceholder('1.0')
+        .setValue(this.plugin.settings.processing.diarization?.mergeThreshold?.toString() || '1.0')
+        .onChange(async (value) => {
+          const numValue = parseFloat(value);
+          if (!isNaN(numValue) && numValue >= 0 && numValue <= 10) {
+            if (!this.plugin.settings.processing.diarization) {
+              this.plugin.settings.processing.diarization = {
+                enabled: false,
+                provider: 'pyannote',
+                minSpeakers: 1,
+                maxSpeakers: 10,
+                mergeThreshold: numValue
+              };
+            } else {
+              this.plugin.settings.processing.diarization.mergeThreshold = numValue;
+            }
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    // Error Logging Configuration Section
+    containerEl.createEl('h3', { text: 'Error Logging Configuration' });
+
+    new Setting(containerEl)
+      .setName('Enable Error Logging')
+      .setDesc('Log errors and processing details to file for debugging')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.logging.enabled)
+        .onChange(async (value) => {
+          this.plugin.settings.logging.enabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Log Level')
+      .setDesc('Minimum level of messages to log')
+      .addDropdown(dropdown => dropdown
+        .addOption('error', 'Error')
+        .addOption('warn', 'Warning')
+        .addOption('info', 'Info')
+        .addOption('debug', 'Debug')
+        .setValue(this.plugin.settings.logging.level)
+        .onChange(async (value) => {
+          this.plugin.settings.logging.level = value as 'error' | 'warn' | 'info' | 'debug';
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Max Log File Size (MB)')
+      .setDesc('Maximum size of log file before rotation')
+      .addText(text => text
+        .setPlaceholder('5')
+        .setValue((this.plugin.settings.logging.maxLogFileBytes! / (1024 * 1024)).toString())
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue > 0) {
+            this.plugin.settings.logging.maxLogFileBytes = numValue * 1024 * 1024;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Max Log Files')
+      .setDesc('Maximum number of rotated log files to keep')
+      .addText(text => text
+        .setPlaceholder('5')
+        .setValue(this.plugin.settings.logging.maxLogFiles?.toString() || '5')
+        .onChange(async (value) => {
+          const numValue = parseInt(value);
+          if (!isNaN(numValue) && numValue > 0) {
+            this.plugin.settings.logging.maxLogFiles = numValue;
+            await this.plugin.saveSettings();
+          }
+        }));
 
     // Legacy AI Configuration Section (kept for backward compatibility)
     containerEl.createEl('h3', { text: 'Legacy AI Configuration' });

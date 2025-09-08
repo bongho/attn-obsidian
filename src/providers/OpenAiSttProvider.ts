@@ -39,7 +39,7 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+      await this.handleApiError(response);
     }
 
     const result = await response.json();
@@ -80,5 +80,46 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
 
   private getApiKeyFromEnv(): string | undefined {
     return process.env.OPENAI_API_KEY;
+  }
+
+  private async handleApiError(response: Response): Promise<never> {
+    const status = response.status;
+    const statusText = response.statusText;
+    
+    let errorData: any;
+    let errorMessage = `OpenAI API error: ${status} ${statusText}`;
+    
+    try {
+      errorData = await response.json();
+      if (errorData.error?.message) {
+        errorMessage = errorData.error.message;
+      }
+    } catch {
+      // If JSON parsing fails, try text
+      try {
+        const textResponse = await response.text();
+        if (textResponse) {
+          errorMessage = textResponse;
+        }
+      } catch {
+        // Keep default error message
+      }
+    }
+
+    // Create enhanced error with status and response data for retry logic
+    const error = new Error(errorMessage) as any;
+    error.status = status;
+    error.response = {
+      status,
+      statusText,
+      data: errorData
+    };
+    
+    // Add error code for network-level errors
+    if (status >= 500) {
+      error.code = `HTTP_${status}`;
+    }
+
+    throw error;
   }
 }

@@ -1,5 +1,5 @@
 import { App, Plugin, PluginSettingTab, TFile, Notice } from 'obsidian';
-import { ATTNSettings, AudioSpeedOption } from './types';
+import { ATTNSettings, AudioSpeedOption, VerboseTranscriptionResult } from './types';
 import { ATTNSettingTab } from './settings';
 import { ApiService } from './apiService';
 import { NoteCreator } from './noteCreator';
@@ -28,6 +28,30 @@ const DEFAULT_SETTINGS: ATTNSettings = {
   summary: {
     provider: 'openai',
     model: 'gpt-4'
+  },
+  processing: {
+    enableChunking: true,
+    maxUploadSizeMB: 24.5,
+    maxChunkDurationSec: 85,
+    targetSampleRateHz: 16000,
+    targetChannels: 1,
+    silenceThresholdDb: -35,
+    minSilenceMs: 400,
+    hardSplitWindowSec: 30,
+    preserveIntermediates: false,
+    diarization: {
+      enabled: false,
+      provider: 'pyannote',
+      minSpeakers: 1,
+      maxSpeakers: 10,
+      mergeThreshold: 1.0
+    }
+  },
+  logging: {
+    enabled: true,
+    level: 'error',
+    maxLogFileBytes: 5 * 1024 * 1024,
+    maxLogFiles: 5
   }
 };
 
@@ -87,6 +111,18 @@ export default class ATTNPlugin extends Plugin {
         this.settings.summary.apiKey = loadedData.openaiApiKey;
         needsSave = true;
       }
+    }
+
+    // Add missing processing settings for existing users
+    if (!loadedData?.processing) {
+      this.settings.processing = DEFAULT_SETTINGS.processing;
+      needsSave = true;
+    }
+
+    // Add missing logging settings for existing users
+    if (!loadedData?.logging) {
+      this.settings.logging = DEFAULT_SETTINGS.logging;
+      needsSave = true;
     }
 
     if (needsSave) {
@@ -196,6 +232,8 @@ export default class ATTNPlugin extends Plugin {
         filename: file.name,
         transcript: result.transcript,
         summary: result.summary,
+        speakers: this.formatSpeakers(result.transcriptionResult),
+        speakerTranscript: this.formatSpeakerTranscript(result.transcriptionResult),
       };
 
       // Step 5: Process templates using TemplateProcessor and TemplateLoader
@@ -250,5 +288,67 @@ export default class ATTNPlugin extends Plugin {
       
       new Notice(errorMessage);
     }
+  }
+
+  /**
+   * Format speakers list for template
+   */
+  private formatSpeakers(transcriptionResult: VerboseTranscriptionResult): string {
+    if (!transcriptionResult.speakers || transcriptionResult.speakers.length === 0) {
+      return '';
+    }
+
+    return transcriptionResult.speakers
+      .map((speaker: any) => `- ${speaker.label}`)
+      .join('\n');
+  }
+
+  /**
+   * Format transcript with speaker labels for template
+   */
+  private formatSpeakerTranscript(transcriptionResult: VerboseTranscriptionResult): string {
+    if (!transcriptionResult.segments) {
+      return transcriptionResult.text || '';
+    }
+
+    const groupedSegments = this.groupSegmentsBySpeaker(transcriptionResult.segments);
+    
+    return groupedSegments
+      .map(group => {
+        const speakerLabel = group.speaker ? `**${group.speaker.label}:** ` : '';
+        return `${speakerLabel}${group.text}`;
+      })
+      .join('\n\n');
+  }
+
+  /**
+   * Group consecutive segments by the same speaker
+   */
+  private groupSegmentsBySpeaker(segments: any[]): Array<{speaker: any, text: string}> {
+    const groups: Array<{speaker: any, text: string}> = [];
+    let currentGroup: {speaker: any, text: string} | null = null;
+
+    for (const segment of segments) {
+      if (!currentGroup || 
+          (currentGroup.speaker?.id !== segment.speaker?.id)) {
+        // New speaker or no previous group
+        if (currentGroup) {
+          groups.push(currentGroup);
+        }
+        currentGroup = {
+          speaker: segment.speaker,
+          text: segment.text
+        };
+      } else {
+        // Same speaker, append text
+        currentGroup.text += ' ' + segment.text;
+      }
+    }
+
+    if (currentGroup) {
+      groups.push(currentGroup);
+    }
+
+    return groups;
   }
 }

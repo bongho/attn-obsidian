@@ -5,7 +5,7 @@ import { ATTNSettings, VerboseTranscriptionResult } from './types';
 export interface ProcessAudioResult {
   transcript: string;
   summary: string;
-  verboseResult?: VerboseTranscriptionResult; // New field for detailed transcription data
+  transcriptionResult: VerboseTranscriptionResult; // Detailed transcription data
 }
 
 export class ApiService {
@@ -40,7 +40,7 @@ export class ApiService {
       return {
         transcript: verboseResult.text,
         summary: summary,
-        verboseResult: verboseResult
+        transcriptionResult: verboseResult
       };
     } catch (error) {
       if (error instanceof Error) {
@@ -58,6 +58,10 @@ export class ApiService {
       }
       throw error;
     }
+  }
+
+  async transcribeAudio(audioFile: File, options: { format: 'verbose_json' }): Promise<VerboseTranscriptionResult> {
+    return this.transcribeAudioVerbose(audioFile);
   }
 
   private async transcribeAudioVerbose(audioFile: File): Promise<VerboseTranscriptionResult> {

@@ -3,22 +3,46 @@ export type SttProvider = 'openai' | 'gemini' | 'local-whisper';
 export type SummaryProvider = 'openai' | 'gemini' | 'local-llm';
 export type WhisperBackend = 'faster-whisper-cpp' | 'whisper.cpp';
 
-// Verbose Transcription Result
+// Speaker diarization result
+export interface Speaker {
+  id: string;
+  label: string; // "Speaker 1", "Speaker 2", etc.
+  confidence?: number;
+}
+
+export interface SpeakerSegment {
+  start: number;
+  end: number;
+  speaker: Speaker;
+  confidence?: number;
+}
+
+// Enhanced word with speaker information
+export interface Word {
+  start: number;
+  end: number;
+  word: string;
+  speaker?: Speaker;
+}
+
+// Enhanced segment with speaker information
+export interface TranscriptionSegment {
+  id: number;
+  start: number;
+  end: number;
+  text: string;
+  speaker?: Speaker;
+  words?: Word[];
+}
+
+// Verbose Transcription Result with speaker diarization support
 export interface VerboseTranscriptionResult {
   text: string;
   language?: string;
   duration?: number;
-  segments: Array<{
-    id: number;
-    start: number;
-    end: number;
-    text: string;
-    words?: Array<{
-      start: number;
-      end: number;
-      word: string;
-    }>;
-  }>;
+  segments: TranscriptionSegment[];
+  speakers?: Speaker[]; // List of detected speakers
+  speakerSegments?: SpeakerSegment[]; // Speaker timeline
   raw?: unknown; // Original API response
 }
 
@@ -68,6 +92,72 @@ export interface SummarySettings {
   ollamaEndpoint?: string;
 }
 
+export interface DiarizationSettings {
+  enabled: boolean;
+  provider?: 'pyannote' | 'whisperx' | 'local';
+  minSpeakers?: number;
+  maxSpeakers?: number;
+  apiKey?: string;
+  modelPath?: string;
+  mergeThreshold?: number; // Seconds - merge segments from same speaker if gap is smaller
+}
+
+export interface ProcessingSettings {
+  enableChunking: boolean;
+  maxUploadSizeMB?: number;
+  maxChunkDurationSec?: number;
+  targetSampleRateHz?: number;
+  targetChannels?: 1 | 2;
+  silenceThresholdDb?: number;
+  minSilenceMs?: number;
+  hardSplitWindowSec?: number;
+  preserveIntermediates?: boolean;
+  diarization?: DiarizationSettings;
+}
+
+export interface LoggingSettings {
+  enabled: boolean;
+  level: 'error' | 'warn' | 'info' | 'debug';
+  logFilePath?: string;
+  maxLogFileBytes?: number;
+  maxLogFiles?: number;
+}
+
+export interface LogContext {
+  requestId: string;
+  provider: string;
+  model: string;
+  filePath?: string;
+  chunkIndex?: number | null;
+  chunkCount?: number | null;
+  durationSec?: number;
+  sizeBytes?: number;
+  status?: number;
+  responseBody?: unknown;
+  context?: Record<string, unknown>;
+}
+
+export interface SegmentOptions {
+  maxUploadSizeMB?: number;
+  maxChunkDurationSec?: number;
+  targetSampleRateHz?: number;
+  targetChannels?: 1 | 2;
+  silenceThresholdDb?: number;
+  minSilenceMs?: number;
+  hardSplitWindowSec?: number;
+  preserveIntermediates?: boolean;
+  enablePreprocessing?: boolean;
+  audioCodec?: string;
+  audioBitrate?: string;
+}
+
+export interface SegmentResult {
+  bufferOrPath: Buffer | string;
+  startSec: number;
+  endSec: number;
+  sizeBytes: number;
+}
+
 export interface ATTNSettings {
   openaiApiKey: string; // Legacy field for backward compatibility
   saveFolderPath: string;
@@ -80,6 +170,8 @@ export interface ATTNSettings {
   ffmpegPath: string;
   stt: SttSettings;
   summary: SummarySettings;
+  processing: ProcessingSettings;
+  logging: LoggingSettings;
 }
 
 export type AudioSpeedOption = 1 | 2 | 3;
