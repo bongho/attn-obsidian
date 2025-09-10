@@ -16,6 +16,30 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 export class Logger {
   private settings: LoggingSettings;
 
+  static getLogDirectory(): string {
+    // Use OS-specific temp directory with ATTN subdirectory
+    const os = require('os');
+    return path.join(os.tmpdir(), 'attn-logs');
+  }
+
+  static getDefaultLogPath(): string {
+    const logDir = Logger.getLogDirectory();
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    return path.join(logDir, `attn-${today}.log`);
+  }
+
+  static createLogger(settings?: Partial<LoggingSettings>): Logger {
+    const defaultSettings: LoggingSettings = {
+      enabled: true,
+      level: 'info',
+      logFilePath: Logger.getDefaultLogPath(),
+      maxLogFileBytes: 50 * 1024 * 1024, // 50MB in bytes
+      maxLogFiles: 7
+    };
+    
+    return new Logger({ ...defaultSettings, ...settings });
+  }
+
   constructor(settings: LoggingSettings) {
     this.settings = settings;
     
@@ -80,20 +104,35 @@ export class Logger {
 
   private async writeLogEntry(entry: Record<string, unknown>): Promise<void> {
     if (!this.settings.logFilePath) {
+      // Console logging as fallback
+      const timestamp = new Date().toLocaleTimeString();
+      const level = (entry.level as string || 'INFO').toUpperCase();
+      const message = entry.errorMessage || entry.message || JSON.stringify(entry);
+      console.log(`[${timestamp}] ${level}: ${message}`);
       return;
     }
 
-    // Check if rotation is needed
-    await this.rotateLogIfNeeded();
-
-    // Write JSON Lines format (one JSON object per line)
-    const jsonLine = JSON.stringify(entry) + '\n';
-    
     try {
-      fs.appendFileSync(this.settings.logFilePath, jsonLine, 'utf-8');
+      // Ensure directory exists before writing
+      const logDir = path.dirname(this.settings.logFilePath);
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true, mode: 0o755 });
+      }
+      
+      // Check if rotation is needed
+      await this.rotateLogIfNeeded();
+
+      // Write JSON Lines format (one JSON object per line)
+      const jsonLine = JSON.stringify(entry) + '\n';
+      
+      fs.appendFileSync(this.settings.logFilePath, jsonLine, { encoding: 'utf-8', mode: 0o644 });
     } catch (error) {
-      // Fail silently to avoid recursive logging issues
-      console.warn('Logger: Failed to write log entry:', error);
+      // Fallback to console logging
+      console.warn(`📝 ATTN Logger: Failed to write log entry to ${this.settings.logFilePath}:`, error);
+      const timestamp = new Date().toLocaleTimeString();
+      const level = (entry.level as string || 'INFO').toUpperCase();
+      const message = entry.errorMessage || entry.message || JSON.stringify(entry);
+      console.log(`[${timestamp}] ${level}: ${message}`);
     }
   }
 

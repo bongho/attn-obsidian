@@ -56,9 +56,25 @@ export class AudioProcessor {
       const audioData = await audioFile.arrayBuffer();
       writeFileSync(inputPath, new Uint8Array(audioData));
 
-      // Use ffmpeg to speed up audio
-      const ffmpegCommand = `"${this.ffmpegPath}" -i "${inputPath}" -filter:a "atempo=${speedMultiplier}" -c:a aac "${outputPath}"`;
+      // Enhanced ffmpeg command for better quality at high speeds
+      let ffmpegCommand: string;
       
+      if (speedMultiplier >= 3) {
+        // For 3x speed, use multiple atempo filters to avoid quality degradation
+        // atempo filter supports max 2.0x per stage, so use cascade for higher speeds
+        const stages = Math.ceil(Math.log2(speedMultiplier));
+        const stageMultiplier = Math.pow(speedMultiplier, 1/stages);
+        
+        const atempoFilters = Array(stages).fill(0).map(() => `atempo=${stageMultiplier.toFixed(3)}`).join(',');
+        
+        // Add noise reduction and normalization for better quality
+        ffmpegCommand = `"${this.ffmpegPath}" -i "${inputPath}" -af "${atempoFilters},highpass=f=80,lowpass=f=8000,dynaudnorm=f=75:g=25" -c:a aac -b:a 128k "${outputPath}"`;
+      } else {
+        // Standard processing for lower speeds
+        ffmpegCommand = `"${this.ffmpegPath}" -i "${inputPath}" -filter:a "atempo=${speedMultiplier}" -c:a aac "${outputPath}"`;
+      }
+      
+      console.log(`Processing audio with ${speedMultiplier}x speed...`);
       await execAsync(ffmpegCommand);
 
       // Read processed audio back
@@ -145,7 +161,7 @@ export class AudioProcessor {
 
   async transcribeWithRetry(audioFile: File, settings: ATTNSettings): Promise<VerboseTranscriptionResult> {
     const requestId = uuidv4();
-    const logger = new Logger(settings.logging);
+    const logger = Logger.createLogger(settings.logging);
     const apiService = new ApiService(settings);
     
     // Initialize diarization service if needed
@@ -211,7 +227,7 @@ export class AudioProcessor {
 
   async transcribeWithChunking(audioFile: File, settings: ATTNSettings): Promise<VerboseTranscriptionResult> {
     const requestId = uuidv4();
-    const logger = new Logger(settings.logging);
+    const logger = Logger.createLogger(settings.logging);
     const segmenter = new AudioSegmenter(this.userFfmpegPath);
     
     // Initialize diarization service if needed

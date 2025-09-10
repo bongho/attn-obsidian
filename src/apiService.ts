@@ -290,7 +290,20 @@ export class ApiService {
       }
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`요약 생성 실패: ${error.message}`);
+        // Enhanced error reporting for better debugging
+      const errorMessage = (error as any).response?.data?.error?.message || (error as Error).message;
+      const errorCode = (error as any).response?.status || 'unknown';
+      const errorType = (error as any).response?.data?.error?.type || 'unknown';
+      
+      console.error('Summarization error details:', {
+        message: errorMessage,
+        code: errorCode,
+        type: errorType,
+        provider: this.settings.summary.provider,
+        model: this.settings.summary.model
+      });
+      
+      throw new Error(`요약 생성 실패 (${errorCode}): ${errorMessage}`);
       }
       throw error;
     }
@@ -382,24 +395,48 @@ ${speakerInfo}
 회의의 전체적인 흐름, 주요 결정사항, 액션 아이템을 명확히 정리해주세요.
 `;
 
+    // Check total length and truncate if necessary to avoid token limits
+    const maxTokens = 12000; // Conservative limit for GPT models
+    const estimatedTokens = (finalSummaryContext.length + partialSummaries.join('\n\n---\n\n').length) / 4;
+    
+    let consolidatedText = finalSummaryContext + '\n\n' + partialSummaries.join('\n\n---\n\n');
+    
+    if (estimatedTokens > maxTokens) {
+      // Truncate partial summaries if too long
+      const maxPartialLength = Math.floor((maxTokens * 4 - finalSummaryContext.length) / partialSummaries.length);
+      const truncatedSummaries = partialSummaries.map(summary => 
+        summary.length > maxPartialLength ? summary.substring(0, maxPartialLength) + '...' : summary
+      );
+      
+      consolidatedText = finalSummaryContext + '\n\n' + truncatedSummaries.join('\n\n---\n\n');
+      
+      if (this.config.isDebugMode()) {
+        console.log(`🔧 ATTN Debug: Truncated summaries to fit token limit (${estimatedTokens} -> ${consolidatedText.length / 4} est. tokens)`);
+      }
+    }
+
     const consolidatedInput = {
-      text: finalSummaryContext + '\n\n' + partialSummaries.join('\n\n---\n\n'),
+      text: consolidatedText,
       segments: [], // Not needed for final consolidation
       language: verboseResult.language,
       duration: estimatedDuration,
       speakers: verboseResult.speakers
     };
 
-    const finalSummary = await summaryProvider.summarize(consolidatedInput, {
-      model: effectiveSummarySettings.model
-    });
-
-    if (this.config.isDebugMode()) {
-      console.log(`🔧 ATTN Debug: Hierarchical summary completed using ${effectiveSummarySettings.provider}/${effectiveSummarySettings.model}`);
-      console.log(`🔧 ATTN Debug: Consolidated ${partialSummaries.length} partial summaries into final summary`);
+    try {
+      const finalSummary = await summaryProvider.summarize(consolidatedInput, {
+        model: effectiveSummarySettings.model
+      });
+      
+      return finalSummary;
+    } catch (error) {
+      // Fallback: if final consolidation fails, return concatenated partial summaries
+      if (this.config.isDebugMode()) {
+        console.log(`🔧 ATTN Debug: Final consolidation failed, returning concatenated summaries: ${(error as Error).message}`);
+      }
+      
+      return partialSummaries.join('\n\n=== 구간 요약 ===\n\n');
     }
-
-    return finalSummary;
   }
 
   private async createPartialSummaries(
@@ -407,61 +444,59 @@ ${speakerInfo}
     summaryProvider: any,
     effectiveSummarySettings: any
   ): Promise<string[]> {
-    const groupSize = 12; // Process 12 segments per group for optimal context
+    const groupSize = 8; // Reduced from 12 to 8 for better token management
     const segmentGroups = this.chunkArray(verboseResult.segments, groupSize);
     const partialSummaries: string[] = [];
 
-    // Process groups in parallel batches of 3 to respect rate limits
-    const batchSize = 3;
-    for (let i = 0; i < segmentGroups.length; i += batchSize) {
-      const batch = segmentGroups.slice(i, i + batchSize);
+    // Process groups sequentially to avoid rate limits (changed from parallel)
+    for (let i = 0; i < segmentGroups.length; i++) {
+      const group = segmentGroups[i];
+      const globalGroupIndex = i;
+      const groupStartTime = group[0]?.start || 0;
+      const groupEndTime = group[group.length - 1]?.end || 0;
       
-      const batchPromises = batch.map(async (group, groupIndex) => {
-        const globalGroupIndex = i + groupIndex;
-        const groupStartTime = group[0]?.start || 0;
-        const groupEndTime = group[group.length - 1]?.end || 0;
-        
-        const groupText = group.map(segment => segment.text).join(' ');
-        const groupContext = `
+      const groupText = group.map(segment => segment.text).join(' ');
+      
+      // Check text length and truncate if too long
+      const maxGroupLength = 3000; // Conservative limit per group
+      const truncatedGroupText = groupText.length > maxGroupLength ? 
+        groupText.substring(0, maxGroupLength) + '...' : groupText;
+      
+      const groupContext = `
 이것은 회의의 ${this.formatTime(groupStartTime)}부터 ${this.formatTime(groupEndTime)}까지의 내용입니다 (구간 ${globalGroupIndex + 1}/${segmentGroups.length}).
 
-이 구간의 주요 내용을 간결하게 요약해주세요:
+이 구간의 주요 내용을 간결하게 요약해주세요 (2-3문장으로):
 `;
 
-        const input = {
-          text: groupContext + '\n\n' + groupText,
-          segments: group,
-          language: verboseResult.language
-        };
+      const input = {
+        text: groupContext + '\n\n' + truncatedGroupText,
+        segments: group,
+        language: verboseResult.language
+      };
 
-        if (this.config.isDebugMode()) {
-          console.log(`🔧 ATTN Debug: Processing group ${globalGroupIndex + 1}/${segmentGroups.length} (${group.length} segments)`);
-        }
-
-        return await summaryProvider.summarize(input, {
-          model: effectiveSummarySettings.model
-        });
-      });
-
-      // Wait for batch completion
-      const batchResults = await Promise.allSettled(batchPromises);
-      
-      // Handle results and add successful summaries
-      for (let j = 0; j < batchResults.length; j++) {
-        const result = batchResults[j];
-        if (result.status === 'fulfilled') {
-          partialSummaries.push(result.value);
-        } else {
-          const groupIndex = i + j + 1;
-          console.warn(`Failed to create partial summary for group ${groupIndex}:`, result.reason);
-          // Add a placeholder summary to maintain structure
-          partialSummaries.push(`구간 ${groupIndex} 요약 실패: 처리 중 오류가 발생했습니다.`);
-        }
+      if (this.config.isDebugMode()) {
+        console.log(`🔧 ATTN Debug: Processing group ${globalGroupIndex + 1}/${segmentGroups.length} (${group.length} segments, ${truncatedGroupText.length} chars)`);
       }
 
-      // Rate limiting delay between batches
-      if (i + batchSize < segmentGroups.length) {
-        await this.sleep(2000); // 2 second delay between batches
+      try {
+        const partialSummary = await summaryProvider.summarize(input, {
+          model: effectiveSummarySettings.model
+        });
+        partialSummaries.push(partialSummary);
+        
+        if (this.config.isDebugMode()) {
+          console.log(`🔧 ATTN Debug: Successfully processed group ${globalGroupIndex + 1}`);
+        }
+      } catch (error) {
+        console.warn(`Failed to create partial summary for group ${globalGroupIndex + 1}:`, error);
+        // Add a fallback summary using the original text
+        const fallbackSummary = `구간 ${globalGroupIndex + 1} (${this.formatTime(groupStartTime)}-${this.formatTime(groupEndTime)}): ${truncatedGroupText.substring(0, 200)}...`;
+        partialSummaries.push(fallbackSummary);
+      }
+
+      // Rate limiting delay between groups
+      if (i < segmentGroups.length - 1) {
+        await this.sleep(1500); // 1.5 second delay between groups
       }
     }
 
