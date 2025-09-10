@@ -160,15 +160,6 @@ export class AudioProcessor {
       sizeBytes: audioFile.size
     };
 
-    // Check if file exceeds size limits and chunking is enabled
-    const maxSizeMB = settings.processing.maxUploadSizeMB || 24.5;
-    const maxSizeBytes = maxSizeMB * 1024 * 1024;
-    
-    if (audioFile.size > maxSizeBytes && settings.processing.enableChunking) {
-      await logger.log('info', { ...logContext, message: 'File size exceeds limit, using chunking' });
-      return this.transcribeWithChunking(audioFile, settings);
-    }
-
     // Attempt direct transcription with retry logic
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -186,36 +177,6 @@ export class AudioProcessor {
         const errorStatus = (error as any).status || (error as any).response?.status;
         const errorMessage = (error as any).message || String(error);
         const errorCode = (error as any).code;
-
-        // Handle 400 errors (file too large, duration too long)
-        if (errorStatus === 400) {
-          if (settings.processing.enableChunking && this.is400FileLimit(errorMessage)) {
-            await logger.logError({
-              ...logContext,
-              status: errorStatus,
-              responseBody: (error as any).response?.data
-            }, error);
-
-            await logger.log('info', { 
-              ...logContext, 
-              message: 'Received 400 error for file size/duration, retrying with chunking' 
-            });
-            
-            return this.transcribeWithChunking(audioFile, settings);
-          } else {
-            const enhancedMessage = settings.processing.enableChunking 
-              ? errorMessage
-              : `${errorMessage}. You can enable chunking in Processing settings to handle large files automatically.`;
-            
-            await logger.logError({
-              ...logContext,
-              status: errorStatus,
-              responseBody: (error as any).response?.data
-            }, new Error(enhancedMessage));
-            
-            throw new Error(enhancedMessage);
-          }
-        }
 
         // Handle network/server errors with retry
         if (this.shouldRetry(errorStatus, errorCode) && attempt < maxRetries) {
@@ -251,7 +212,6 @@ export class AudioProcessor {
   async transcribeWithChunking(audioFile: File, settings: ATTNSettings): Promise<VerboseTranscriptionResult> {
     const requestId = uuidv4();
     const logger = new Logger(settings.logging);
-    const apiService = new ApiService(settings);
     const segmenter = new AudioSegmenter(this.userFfmpegPath);
     
     // Initialize diarization service if needed
@@ -310,7 +270,7 @@ export class AudioProcessor {
           const chunkFile = await this.segmentToFile(segment, `${audioFile.name}_chunk_${i}`);
           
           // Transcribe chunk with simple retry (no chunking recursion)
-          const chunkResult = await this.transcribeChunkWithRetry(chunkFile, apiService, chunkLogContext, logger);
+          const chunkResult = await this.transcribeChunkWithRetry(chunkFile, settings, chunkLogContext, logger);
           chunkResults.push(chunkResult);
           
           await logger.log('info', {
@@ -422,7 +382,7 @@ export class AudioProcessor {
 
   private async transcribeChunkWithRetry(
     chunkFile: File, 
-    apiService: ApiService, 
+    settings: ATTNSettings,
     logContext: LogContext, 
     logger: Logger
   ): Promise<VerboseTranscriptionResult> {
@@ -430,7 +390,25 @@ export class AudioProcessor {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return await apiService.transcribeAudio(chunkFile, { format: 'verbose_json' });
+        // Use direct STT provider instead of ApiService to avoid circular dependency
+        const { createSttProvider } = await import('./providers/providerFactory');
+        const { ConfigLoader } = await import('./configLoader');
+        
+        const config = ConfigLoader.getInstance();
+        const effectiveSttSettings = {
+          ...settings.stt,
+          apiKey: settings.stt.apiKey || settings.openaiApiKey || config.getOpenAIApiKey() || '',
+          language: settings.stt.language || config.getOpenAISettings()?.language || 'ko'
+        };
+
+        const sttProvider = createSttProvider(effectiveSttSettings);
+        const audioBuffer = await chunkFile.arrayBuffer();
+        
+        return await sttProvider.transcribe(audioBuffer, {
+          format: 'verbose_json',
+          language: effectiveSttSettings.language,
+          model: effectiveSttSettings.model
+        });
       } catch (error) {
         const errorStatus = (error as any).status || (error as any).response?.status;
         const errorCode = (error as any).code;

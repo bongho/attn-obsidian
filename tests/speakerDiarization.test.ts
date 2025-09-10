@@ -1,7 +1,4 @@
-import { SpeakerDiarizationService } from '../src/speakerDiarization';
-import { DiarizationSettings, VerboseTranscriptionResult } from '../src/types';
-
-// Mock modules
+// Mock modules first
 const mockExecAsync = jest.fn();
 jest.mock('child_process', () => ({
   exec: jest.fn()
@@ -10,6 +7,9 @@ jest.mock('util', () => ({
   promisify: () => mockExecAsync
 }));
 jest.mock('fs');
+
+import { SpeakerDiarizationService } from '../src/speakerDiarization';
+import { DiarizationSettings, VerboseTranscriptionResult } from '../src/types';
 
 describe('SpeakerDiarizationService', () => {
   let service: SpeakerDiarizationService;

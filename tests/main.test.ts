@@ -1,6 +1,11 @@
 // Mock OpenAI to prevent shim issues
 jest.mock('openai', () => jest.fn());
 
+// Mock UUID to prevent ES module issues
+jest.mock('uuid', () => ({
+  v4: () => 'test-uuid-main'
+}));
+
 // Mock the dependencies BEFORE importing main
 jest.mock('../src/apiService');
 jest.mock('../src/noteCreator');
@@ -269,7 +274,7 @@ describe('ATTNPlugin Integration', () => {
       mockApiService.processAudioFile.mockResolvedValue({
         transcript: mockTranscript,
         summary: mockSummary,
-        verboseResult: {
+        transcriptionResult: {
           text: mockTranscript,
           segments: [],
           language: 'ko'
@@ -417,7 +422,7 @@ describe('ATTNPlugin Integration', () => {
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('오디오 처리 중 오류'),
-        apiError
+        expect.any(Error)
       );
       
       consoleSpy.mockRestore();

@@ -4,24 +4,22 @@ module.exports = {
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
   transform: {
-    '^.+\\.ts$': 'ts-jest',
-  },
-  transformIgnorePatterns: [
-    'node_modules/(?!(uuid|other-esm-modules)/)',
-  ],
-  globals: {
-    'ts-jest': {
+    '^.+\\.(ts|tsx)$': ['ts-jest', {
       tsconfig: {
         allowSyntheticDefaultImports: true,
       },
-    },
+    }],
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(uuid)/)',
+  ],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
   ],
   moduleNameMapper: {
     '^src/(.*)$': '<rootDir>/src/$1',
+    '^uuid$': require.resolve('uuid'),
   },
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],

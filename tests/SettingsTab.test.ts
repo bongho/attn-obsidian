@@ -1,3 +1,8 @@
+// Mock UUID to prevent ES module issues
+jest.mock('uuid', () => ({
+  v4: () => 'test-uuid-settings'
+}));
+
 import { ATTNSettingTab } from '../src/settings';
 import { ATTNSettings } from '../src/types';
 

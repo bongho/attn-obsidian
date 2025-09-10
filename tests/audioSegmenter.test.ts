@@ -1,8 +1,4 @@
-import { AudioSegmenter } from '../src/audioSegmenter';
-import { SegmentOptions } from '../src/types';
-import { writeFileSync, unlinkSync, existsSync, readFileSync, statSync } from 'fs';
-
-// Mock modules
+// Mock modules first
 const mockExecAsync = jest.fn();
 
 jest.mock('child_process', () => ({
@@ -14,6 +10,10 @@ jest.mock('util', () => ({
 }));
 
 jest.mock('fs');
+
+import { AudioSegmenter } from '../src/audioSegmenter';
+import { SegmentOptions } from '../src/types';
+import { writeFileSync, unlinkSync, existsSync, readFileSync, statSync } from 'fs';
 
 const mockWriteFileSync = writeFileSync as jest.MockedFunction<typeof writeFileSync>;
 const mockUnlinkSync = unlinkSync as jest.MockedFunction<typeof unlinkSync>;

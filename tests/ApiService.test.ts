@@ -143,7 +143,7 @@ describe('ApiService', () => {
       expect(result).toEqual({
         transcript: mockVerboseResult.text,
         summary: mockSummaryText,
-        verboseResult: mockVerboseResult
+        transcriptionResult: mockVerboseResult
       });
     });
 

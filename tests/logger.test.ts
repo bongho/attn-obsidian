@@ -75,18 +75,12 @@ describe('Logger', () => {
       const error = new Error('Test error');
       await logger.logError(context, error);
 
-      expect(mockedFs.appendFileSync).toHaveBeenCalledWith(
-        mockSettings.logFilePath,
-        expect.stringContaining('"level":"error"')
-      );
-      expect(mockedFs.appendFileSync).toHaveBeenCalledWith(
-        mockSettings.logFilePath,
-        expect.stringContaining('"requestId":"req-123"')
-      );
-      expect(mockedFs.appendFileSync).toHaveBeenCalledWith(
-        mockSettings.logFilePath,
-        expect.stringContaining('"errorMessage":"Test error"')
-      );
+      const logCall = mockedFs.appendFileSync.mock.calls[0][1] as string;
+      const logEntry = JSON.parse(logCall.trim());
+      
+      expect(logEntry.level).toBe('error');
+      expect(logEntry.requestId).toBe('req-123');
+      expect(logEntry.errorMessage).toBe('Test error');
     });
 
     test('should not log when logging is disabled', async () => {

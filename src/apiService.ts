@@ -23,14 +23,25 @@ export class ApiService {
 
   async processAudioFile(audioFile: File, systemPrompt?: string): Promise<ProcessAudioResult> {
     try {
-      // Step 1: Transcribe audio using the configured STT provider
-      const verboseResult = await this.transcribeAudioVerbose(audioFile);
+      // Check if file is large enough to require chunking
+      const maxSizeMB = this.settings.processing?.maxUploadSizeMB || 24.5;
+      const maxSizeBytes = maxSizeMB * 1024 * 1024;
+      
+      let verboseResult: VerboseTranscriptionResult;
+      
+      if (audioFile.size > maxSizeBytes && this.settings.processing?.enableChunking) {
+        // Use chunking workflow: transcribe all chunks first, then process complete result
+        verboseResult = await this.processWithChunking(audioFile);
+      } else {
+        // Direct transcription for smaller files
+        verboseResult = await this.transcribeAudioVerbose(audioFile);
+      }
       
       if (!verboseResult.text || verboseResult.text.trim() === '') {
         throw new Error('음성 인식 결과가 비어있습니다.');
       }
 
-      // Step 2: Summarize transcription using the configured summarization provider
+      // Step 2: Summarize the complete transcription result
       const summary = await this.summarizeWithSegments(verboseResult, systemPrompt);
       
       if (!summary || summary.trim() === '') {
@@ -62,6 +73,24 @@ export class ApiService {
 
   async transcribeAudio(audioFile: File, options: { format: 'verbose_json' }): Promise<VerboseTranscriptionResult> {
     return this.transcribeAudioVerbose(audioFile);
+  }
+
+  private async processWithChunking(audioFile: File): Promise<VerboseTranscriptionResult> {
+    const { AudioProcessor } = await import('./audioProcessor');
+    const audioProcessor = new AudioProcessor();
+    
+    if (this.config.isDebugMode()) {
+      console.log('🔧 ATTN Debug: Starting chunked transcription workflow');
+    }
+
+    // Step 1: Transcribe all chunks (STT only, no summarization)
+    const chunkTranscriptionResult = await audioProcessor.transcribeWithChunking(audioFile, this.settings);
+    
+    if (this.config.isDebugMode()) {
+      console.log(`🔧 ATTN Debug: Completed transcription of ${chunkTranscriptionResult.segments.length} segments`);
+    }
+
+    return chunkTranscriptionResult;
   }
 
   private async transcribeAudioVerbose(audioFile: File): Promise<VerboseTranscriptionResult> {
