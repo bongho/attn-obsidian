@@ -26,6 +26,18 @@ export class AudioSegmenter {
   private tempDir: string;
   private ffmpegPath: string | null = null;
   private userFfmpegPath?: string;
+  private segmentCache: Map<string, SegmentResult[]> = new Map();
+  private performanceMetrics: {
+    totalProcessingTime: number;
+    segmentationTime: number;
+    silenceDetectionTime: number;
+    cacheHitRate: number;
+  } = {
+    totalProcessingTime: 0,
+    segmentationTime: 0,
+    silenceDetectionTime: 0,
+    cacheHitRate: 0
+  };
 
   constructor(userFfmpegPath?: string) {
     this.tempDir = join(tmpdir(), 'attn-audio-segmenter');
@@ -33,13 +45,34 @@ export class AudioSegmenter {
     this.ensureTempDir();
   }
 
+  getPerformanceMetrics() {
+    return { ...this.performanceMetrics };
+  }
+
+  clearCache(): void {
+    this.segmentCache.clear();
+    console.log('Audio segmentation cache cleared');
+  }
+
   async segmentAudio(input: File | Buffer | string, options: SegmentOptions): Promise<SegmentResult[]> {
+    const startTime = Date.now();
+    
+    // Generate cache key for this input
+    const cacheKey = await this.generateCacheKey(input, options);
+    
+    // Check cache first
+    if (this.segmentCache.has(cacheKey)) {
+      console.log('Cache hit: Using cached segmentation result');
+      this.performanceMetrics.cacheHitRate = (this.performanceMetrics.cacheHitRate + 1) / 2; // Simple rolling average
+      return this.segmentCache.get(cacheKey)!;
+    }
+    
     const maxSizeMB = options.maxUploadSizeMB || 24.5;
     const maxSizeBytes = maxSizeMB * 1024 * 1024;
-    const maxDurationSec = options.maxChunkDurationSec || 85;
-    const silenceThresholdDb = options.silenceThresholdDb || -35;
-    const minSilenceMs = options.minSilenceMs || 400;
-    const hardSplitWindowSec = options.hardSplitWindowSec || 30;
+    const maxDurationSec = options.maxChunkDurationSec || 150; // Increased default for ultra-long meetings
+    const silenceThresholdDb = options.silenceThresholdDb || -30; // Enhanced default
+    const minSilenceMs = options.minSilenceMs || 300; // Faster segmentation
+    const hardSplitWindowSec = options.hardSplitWindowSec || 120; // Longer hard splits
     const enablePreprocessing = options.enablePreprocessing !== false; // Default true
 
     // Get FFmpeg path
@@ -87,9 +120,18 @@ export class AudioSegmenter {
         }];
       }
 
-      // Detect silence intervals
+      // Detect silence intervals with timing
+      const silenceStartTime = Date.now();
       const silenceIntervals = await this.detectSilence(inputPath, silenceThresholdDb, minSilenceMs / 1000);
-      console.log(`Detected ${silenceIntervals.length} silence intervals`);
+      this.performanceMetrics.silenceDetectionTime = Date.now() - silenceStartTime;
+      
+      console.log(`Detected ${silenceIntervals.length} silence intervals in ${this.performanceMetrics.silenceDetectionTime}ms`);
+      
+      // Log silence interval statistics
+      if (silenceIntervals.length > 0) {
+        const avgSilenceDuration = silenceIntervals.reduce((sum, interval) => sum + (interval.end - interval.start), 0) / silenceIntervals.length;
+        console.log(`Average silence duration: ${avgSilenceDuration.toFixed(2)}s`);
+      }
 
       // Generate split points based on silence and constraints
       const splitPoints = this.generateSplitPoints(
@@ -114,6 +156,16 @@ export class AudioSegmenter {
         tempFiles.push(...segments.map(s => typeof s.bufferOrPath === 'string' ? s.bufferOrPath : '').filter(Boolean));
       }
 
+      // Cache the result for future use
+      this.segmentCache.set(cacheKey, segments);
+      console.log(`Segmentation result cached with key: ${cacheKey.substring(0, 8)}...`);
+      
+      // Update performance metrics
+      this.performanceMetrics.totalProcessingTime = Date.now() - startTime;
+      this.performanceMetrics.segmentationTime = this.performanceMetrics.totalProcessingTime;
+      
+      console.log(`Segmentation completed in ${this.performanceMetrics.totalProcessingTime}ms`);
+      
       return segments;
 
     } finally {
@@ -122,6 +174,36 @@ export class AudioSegmenter {
         this.cleanupTempFiles(tempFiles);
       }
     }
+  }
+
+  private async generateCacheKey(input: File | Buffer | string, options: SegmentOptions): Promise<string> {
+    // Create a hash of input and options for cache key
+    const crypto = require('crypto');
+    
+    let inputIdentifier: string;
+    if (typeof input === 'string') {
+      // For file paths, use path + file size + modification time
+      const fs = require('fs');
+      const stats = fs.statSync(input);
+      inputIdentifier = `${input}:${stats.size}:${stats.mtime.getTime()}`;
+    } else if (input instanceof File) {
+      // For File objects, use name + size + last modified
+      inputIdentifier = `${input.name}:${input.size}:${input.lastModified}`;
+    } else {
+      // For Buffer, use content hash
+      inputIdentifier = crypto.createHash('md5').update(input).digest('hex');
+    }
+    
+    const optionsString = JSON.stringify({
+      maxUploadSizeMB: options.maxUploadSizeMB,
+      maxChunkDurationSec: options.maxChunkDurationSec,
+      silenceThresholdDb: options.silenceThresholdDb,
+      minSilenceMs: options.minSilenceMs,
+      hardSplitWindowSec: options.hardSplitWindowSec,
+      enablePreprocessing: options.enablePreprocessing
+    });
+    
+    return crypto.createHash('sha256').update(inputIdentifier + optionsString).digest('hex');
   }
 
   private async getFFmpegPath(): Promise<string | null> {
@@ -242,7 +324,33 @@ export class AudioSegmenter {
   }
 
   private async detectSilence(inputPath: string, thresholdDb: number, minDurationSec: number): Promise<SilenceInterval[]> {
-    // Use silencedetect filter to find silence intervals
+    // Enhanced silence detection with adaptive thresholding
+    try {
+      // First pass: Standard silence detection
+      const primaryIntervals = await this.detectSilencePass(inputPath, thresholdDb, minDurationSec);
+      
+      // If we don't find enough silence intervals for long audio, try with relaxed threshold
+      if (primaryIntervals.length < 5 && thresholdDb < -25) {
+        const relaxedThreshold = Math.max(-40, thresholdDb - 5);
+        console.log(`Insufficient silence intervals found (${primaryIntervals.length}), trying relaxed threshold: ${relaxedThreshold}dB`);
+        
+        const secondaryIntervals = await this.detectSilencePass(inputPath, relaxedThreshold, minDurationSec * 0.7);
+        
+        // Merge and deduplicate intervals
+        const allIntervals = [...primaryIntervals, ...secondaryIntervals];
+        return this.mergeSilenceIntervals(allIntervals);
+      }
+      
+      return primaryIntervals;
+      
+    } catch (error) {
+      console.warn('Silence detection failed, using fallback method:', error);
+      // Fallback: Create artificial silence intervals based on audio duration
+      return this.generateFallbackSilenceIntervals(inputPath);
+    }
+  }
+
+  private async detectSilencePass(inputPath: string, thresholdDb: number, minDurationSec: number): Promise<SilenceInterval[]> {
     const command = `"${this.ffmpegPath}" -i "${inputPath}" -af "silencedetect=noise=${thresholdDb}dB:duration=${minDurationSec}" -f null - 2>&1`;
     
     const { stderr } = await execAsync(command).catch(result => result);
@@ -271,6 +379,51 @@ export class AudioSegmenter {
     return silenceIntervals.sort((a, b) => a.start - b.start);
   }
 
+  private mergeSilenceIntervals(intervals: SilenceInterval[]): SilenceInterval[] {
+    if (intervals.length === 0) return [];
+    
+    // Sort by start time
+    intervals.sort((a, b) => a.start - b.start);
+    
+    const merged: SilenceInterval[] = [];
+    let current = intervals[0];
+    
+    for (let i = 1; i < intervals.length; i++) {
+      const next = intervals[i];
+      
+      // Merge overlapping or adjacent intervals (within 0.5 seconds)
+      if (next.start <= current.end + 0.5) {
+        current.end = Math.max(current.end, next.end);
+      } else {
+        merged.push(current);
+        current = next;
+      }
+    }
+    
+    merged.push(current);
+    return merged;
+  }
+
+  private async generateFallbackSilenceIntervals(inputPath: string): Promise<SilenceInterval[]> {
+    // Get audio metadata for duration
+    const metadata = await this.getAudioMetadata(inputPath);
+    const totalDuration = metadata.duration;
+    
+    // Create artificial silence intervals every 180 seconds (3 minutes)
+    const intervals: SilenceInterval[] = [];
+    const intervalSpacing = 180; // 3 minutes
+    
+    for (let time = intervalSpacing; time < totalDuration; time += intervalSpacing) {
+      intervals.push({
+        start: time - 0.5,
+        end: time + 0.5
+      });
+    }
+    
+    console.log(`Generated ${intervals.length} fallback silence intervals for ${totalDuration.toFixed(1)}s audio`);
+    return intervals;
+  }
+
   private generateSplitPoints(
     silenceIntervals: SilenceInterval[],
     totalDuration: number,
@@ -279,30 +432,67 @@ export class AudioSegmenter {
   ): number[] {
     const splitPoints: number[] = [];
     let lastSplitPoint = 0;
+    let segmentCount = 0;
+    
+    // Dynamic adjustment for ultra-long meetings
+    const isUltraLong = totalDuration > 3600; // Over 1 hour
+    const adjustedMaxDuration = isUltraLong ? Math.max(maxDurationSec, 150) : maxDurationSec;
+    const adjustedHardSplit = isUltraLong ? Math.max(hardSplitWindowSec, 120) : hardSplitWindowSec;
+    
+    console.log(`Generating split points for ${totalDuration.toFixed(1)}s audio (${isUltraLong ? 'ultra-long' : 'standard'} mode)`);
+    console.log(`Using max duration: ${adjustedMaxDuration}s, hard split: ${adjustedHardSplit}s`);
 
+    // Smart splitting algorithm
     for (const silence of silenceIntervals) {
       const segmentDuration = silence.start - lastSplitPoint;
       
-      // If this segment would be too long, split at this silence
-      if (segmentDuration > maxDurationSec) {
-        // Choose split point at the middle of the silence interval
-        const splitPoint = (silence.start + silence.end) / 2;
+      // Prefer silence-based splits when segment exceeds target duration
+      if (segmentDuration > adjustedMaxDuration * 0.8) { // 80% threshold for early splitting
+        // Choose optimal split point within silence interval
+        const silenceDuration = silence.end - silence.start;
+        let splitPoint: number;
+        
+        if (silenceDuration > 1.0) {
+          // Long silence: split in the middle
+          splitPoint = (silence.start + silence.end) / 2;
+        } else {
+          // Short silence: split at the end to preserve speech
+          splitPoint = silence.end;
+        }
+        
         splitPoints.push(splitPoint);
         lastSplitPoint = splitPoint;
+        segmentCount++;
+        
+        console.log(`Silence-based split ${segmentCount} at ${splitPoint.toFixed(1)}s (segment duration: ${segmentDuration.toFixed(1)}s)`);
       }
     }
 
-    // Handle remaining audio if it's too long
-    if (totalDuration - lastSplitPoint > maxDurationSec) {
-      // Add hard splits every hardSplitWindowSec seconds
-      let currentPoint = lastSplitPoint + hardSplitWindowSec;
-      while (currentPoint < totalDuration) {
+    // Handle remaining audio with adaptive hard splitting
+    let remainingDuration = totalDuration - lastSplitPoint;
+    if (remainingDuration > adjustedMaxDuration) {
+      console.log(`Applying hard splits for remaining ${remainingDuration.toFixed(1)}s`);
+      
+      // Calculate optimal split size for remaining audio
+      const remainingSegments = Math.ceil(remainingDuration / adjustedMaxDuration);
+      const optimalSplitSize = remainingDuration / remainingSegments;
+      
+      let currentPoint = lastSplitPoint + optimalSplitSize;
+      while (currentPoint < totalDuration - 10) { // Leave at least 10s for final segment
         splitPoints.push(currentPoint);
-        currentPoint += hardSplitWindowSec;
+        segmentCount++;
+        console.log(`Hard split ${segmentCount} at ${currentPoint.toFixed(1)}s`);
+        currentPoint += optimalSplitSize;
       }
     }
 
-    return splitPoints.filter(point => point > 0 && point < totalDuration);
+    const validSplitPoints = splitPoints.filter(point => point > 5 && point < totalDuration - 5);
+    const estimatedSegments = validSplitPoints.length + 1;
+    const avgSegmentDuration = totalDuration / estimatedSegments;
+    
+    console.log(`Generated ${validSplitPoints.length} split points (${estimatedSegments} segments, avg ${avgSegmentDuration.toFixed(1)}s each)`);
+    
+    return validSplitPoints;
   }
 
   private async splitAudioIntoSegments(

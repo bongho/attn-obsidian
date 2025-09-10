@@ -217,31 +217,28 @@ export class AudioProcessor {
     // Initialize diarization service if needed
     this.initializeDiarizationService(settings);
     
+    const estimatedDuration = this.estimateFileDuration(audioFile.size);
+    const isUltraLong = estimatedDuration > 3600; // Over 1 hour
+    
     const logContext: LogContext = {
       requestId,
       provider: settings.stt.provider,
       model: settings.stt.model,
       filePath: audioFile.name,
-      durationSec: this.estimateFileDuration(audioFile.size),
+      durationSec: estimatedDuration,
       sizeBytes: audioFile.size
     };
 
     try {
-      // Segment the audio file
-      const segmentOptions: SegmentOptions = {
-        maxUploadSizeMB: settings.processing.maxUploadSizeMB,
-        maxChunkDurationSec: settings.processing.maxChunkDurationSec,
-        targetSampleRateHz: settings.processing.targetSampleRateHz,
-        targetChannels: settings.processing.targetChannels,
-        silenceThresholdDb: settings.processing.silenceThresholdDb,
-        minSilenceMs: settings.processing.minSilenceMs,
-        hardSplitWindowSec: settings.processing.hardSplitWindowSec,
-        preserveIntermediates: settings.processing.preserveIntermediates,
-        contextOverlapSec: settings.processing.contextOverlapSec, // New: Context overlap for better continuity
-        enablePreprocessing: true, // Enable audio preprocessing for better results
-        audioCodec: 'aac',
-        audioBitrate: '128k'
-      };
+      // Dynamic segment options based on audio length
+      const segmentOptions: SegmentOptions = this.getOptimalSegmentOptions(settings, estimatedDuration);
+      
+      await logger.log('info', {
+        ...logContext,
+        message: `Processing ${isUltraLong ? 'ultra-long' : 'standard'} audio file`,
+        processingMode: isUltraLong ? 'hierarchical' : 'standard',
+        estimatedChunks: Math.ceil(estimatedDuration / (segmentOptions.maxChunkDurationSec || 150))
+      });
 
       const segments = await segmenter.segmentAudio(audioFile, segmentOptions);
       
@@ -254,36 +251,10 @@ export class AudioProcessor {
         chunkCount: segments.length
       });
 
-      // Process each segment
-      const chunkResults: VerboseTranscriptionResult[] = [];
-      for (let i = 0; i < segments.length; i++) {
-        const segment = segments[i];
-        const chunkLogContext = {
-          ...logContext,
-          chunkIndex: i,
-          chunkCount: segments.length,
-          durationSec: segment.endSec - segment.startSec,
-          sizeBytes: segment.sizeBytes
-        };
-
-        try {
-          // Convert segment to File object for API
-          const chunkFile = await this.segmentToFile(segment, `${audioFile.name}_chunk_${i}`);
-          
-          // Transcribe chunk with simple retry (no chunking recursion)
-          const chunkResult = await this.transcribeChunkWithRetry(chunkFile, settings, chunkLogContext, logger);
-          chunkResults.push(chunkResult);
-          
-          await logger.log('info', {
-            ...chunkLogContext,
-            message: `Successfully transcribed chunk ${i + 1}/${segments.length}`
-          });
-
-        } catch (error) {
-          await logger.logError(chunkLogContext, error);
-          throw new Error(`Failed to transcribe chunk ${i}: ${(error as Error).message}`);
-        }
-      }
+      // Process segments with batch parallel processing
+      const chunkResults: VerboseTranscriptionResult[] = await this.processSegmentsBatch(
+        segments, audioFile, settings, logContext, logger
+      );
 
       // Merge results with timeline correction
       let mergedResult = this.mergeVerboseResults(chunkResults, segments);
@@ -456,8 +427,228 @@ export class AudioProcessor {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  private async processSegmentsBatch(
+    segments: SegmentResult[], 
+    audioFile: File,
+    settings: ATTNSettings, 
+    logContext: LogContext, 
+    logger: Logger
+  ): Promise<VerboseTranscriptionResult[]> {
+    const batchSize = this.getBatchSize(segments.length);
+    const results: VerboseTranscriptionResult[] = [];
+    
+    await logger.log('info', {
+      ...logContext,
+      message: `Starting batch processing with batch size: ${batchSize}`,
+      totalSegments: segments.length,
+      estimatedBatches: Math.ceil(segments.length / batchSize)
+    });
+
+    // Process segments in batches
+    for (let batchIndex = 0; batchIndex < segments.length; batchIndex += batchSize) {
+      const batch = segments.slice(batchIndex, batchIndex + batchSize);
+      const batchNumber = Math.floor(batchIndex / batchSize) + 1;
+      const totalBatches = Math.ceil(segments.length / batchSize);
+      
+      await logger.log('info', {
+        ...logContext,
+        message: `Processing batch ${batchNumber}/${totalBatches} (${batch.length} segments)`,
+        batchIndex: batchNumber
+      });
+
+      // Process batch concurrently with Promise.allSettled for error resilience
+      const batchPromises = batch.map(async (segment, segmentIndex) => {
+        const globalIndex = batchIndex + segmentIndex;
+        const chunkLogContext = {
+          ...logContext,
+          chunkIndex: globalIndex,
+          chunkCount: segments.length,
+          batchIndex: batchNumber,
+          durationSec: segment.endSec - segment.startSec,
+          sizeBytes: segment.sizeBytes
+        };
+
+        try {
+          // Convert segment to File object for API
+          const chunkFile = await this.segmentToFile(segment, `${audioFile.name}_chunk_${globalIndex}`);
+          
+          // Transcribe chunk with retry logic
+          const result = await this.transcribeChunkWithRetry(chunkFile, settings, chunkLogContext, logger);
+          
+          await logger.log('info', {
+            ...chunkLogContext,
+            message: `Successfully transcribed chunk ${globalIndex + 1}/${segments.length}`
+          });
+          
+          return { success: true as const, result, index: globalIndex };
+        } catch (error) {
+          await logger.logError(chunkLogContext, error);
+          return { 
+            success: false as const, 
+            error: error as Error, 
+            index: globalIndex,
+            segment 
+          };
+        }
+      });
+
+      // Wait for batch completion
+      const batchResults = await Promise.allSettled(batchPromises);
+      
+      // Process results and handle failures
+      const successfulResults: Array<{ result: VerboseTranscriptionResult, index: number }> = [];
+      const failedResults: Array<{ error: Error, index: number, segment: SegmentResult }> = [];
+      
+      for (const settledResult of batchResults) {
+        if (settledResult.status === 'fulfilled') {
+          const batchItem = settledResult.value;
+          if (batchItem.success) {
+            successfulResults.push({ result: batchItem.result, index: batchItem.index });
+          } else {
+            failedResults.push({ 
+              error: batchItem.error, 
+              index: batchItem.index, 
+              segment: batchItem.segment 
+            });
+          }
+        } else {
+          // Promise itself was rejected
+          const errorContext = {
+            ...logContext,
+            batchIndex: batchNumber
+          };
+          await logger.log('error', errorContext);
+        }
+      }
+
+      // Handle failed segments with retry
+      if (failedResults.length > 0) {
+        await logger.log('warn', {
+          ...logContext,
+          message: `Retrying ${failedResults.length} failed segments from batch ${batchNumber}`,
+          failedCount: failedResults.length
+        });
+
+        // Retry failed segments sequentially with delay
+        for (const failed of failedResults) {
+          try {
+            await this.sleep(1000); // 1 second delay between retries
+            
+            const chunkFile = await this.segmentToFile(failed.segment, `${audioFile.name}_chunk_${failed.index}_retry`);
+            const retryResult = await this.transcribeChunkWithRetry(
+              chunkFile, 
+              settings, 
+              { ...logContext, chunkIndex: failed.index }, 
+              logger
+            );
+            
+            successfulResults.push({ result: retryResult, index: failed.index });
+            
+            const retrySuccessContext = {
+              ...logContext,
+              chunkIndex: failed.index
+            };
+            await logger.log('info', retrySuccessContext);
+          } catch (retryError) {
+            const failureContext = {
+              ...logContext,
+              chunkIndex: failed.index
+            };
+            await logger.logError(failureContext, retryError);
+            
+            throw new Error(`Failed to transcribe chunk ${failed.index} after retry: ${(retryError as Error).message}`);
+          }
+        }
+      }
+
+      // Sort results by index to maintain order
+      successfulResults.sort((a, b) => a.index - b.index);
+      results.push(...successfulResults.map(item => item.result));
+      
+      await logger.log('info', {
+        ...logContext,
+        message: `Completed batch ${batchNumber}/${totalBatches}`,
+        processedSegments: results.length,
+        remainingSegments: segments.length - results.length
+      });
+
+      // Rate limiting delay between batches (except for last batch)
+      if (batchIndex + batchSize < segments.length) {
+        const delayMs = this.getBatchDelay(batchSize);
+        await logger.log('info', {
+          ...logContext,
+          message: `Rate limiting delay: ${delayMs}ms before next batch`
+        });
+        await this.sleep(delayMs);
+      }
+    }
+
+    await logger.log('info', {
+      ...logContext,
+      message: `Batch processing completed. Processed ${results.length}/${segments.length} segments`,
+      successRate: ((results.length / segments.length) * 100).toFixed(1) + '%'
+    });
+
+    return results;
+  }
+
+  private getBatchSize(totalSegments: number): number {
+    // Dynamic batch sizing based on total segments
+    if (totalSegments > 100) {
+      return 15; // Large files: smaller batches for stability
+    } else if (totalSegments > 50) {
+      return 12; // Medium files
+    } else {
+      return 10; // Small files: larger batches for speed
+    }
+  }
+
+  private getBatchDelay(batchSize: number): number {
+    // Progressive delay based on batch size to respect rate limits
+    return Math.max(1000, batchSize * 200); // Minimum 1 second, increase with batch size
+  }
+
   private estimateFileDuration(sizeBytes: number): number {
     // Rough estimate: ~1MB per minute for compressed audio
     return (sizeBytes / (1024 * 1024)) * 60;
+  }
+
+  private getOptimalSegmentOptions(settings: ATTNSettings, estimatedDuration: number): SegmentOptions {
+    // Optimize settings based on audio duration
+    const isUltraLong = estimatedDuration > 3600; // Over 1 hour
+    
+    if (isUltraLong) {
+      // Ultra-long meeting optimizations
+      return {
+        maxUploadSizeMB: settings.processing.maxUploadSizeMB || 24.5,
+        maxChunkDurationSec: 150, // Increased from 85 to reduce chunk count
+        targetSampleRateHz: 16000, // Optimized for faster processing
+        targetChannels: 1, // Mono for efficiency
+        silenceThresholdDb: -30, // Enhanced silence detection
+        minSilenceMs: 300, // Faster segmentation
+        hardSplitWindowSec: 120, // Longer hard splits
+        preserveIntermediates: settings.processing.preserveIntermediates || false,
+        contextOverlapSec: 2, // Minimal overlap for continuity
+        enablePreprocessing: true,
+        audioCodec: 'aac',
+        audioBitrate: '96k' // Lower bitrate for faster processing
+      };
+    } else {
+      // Standard meeting settings
+      return {
+        maxUploadSizeMB: settings.processing.maxUploadSizeMB,
+        maxChunkDurationSec: settings.processing.maxChunkDurationSec,
+        targetSampleRateHz: settings.processing.targetSampleRateHz,
+        targetChannels: settings.processing.targetChannels,
+        silenceThresholdDb: settings.processing.silenceThresholdDb,
+        minSilenceMs: settings.processing.minSilenceMs,
+        hardSplitWindowSec: settings.processing.hardSplitWindowSec,
+        preserveIntermediates: settings.processing.preserveIntermediates,
+        contextOverlapSec: settings.processing.contextOverlapSec,
+        enablePreprocessing: true,
+        audioCodec: 'aac',
+        audioBitrate: '128k'
+      };
+    }
   }
 }

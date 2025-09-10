@@ -3,6 +3,44 @@ export type SttProvider = 'openai' | 'gemini' | 'local-whisper';
 export type SummaryProvider = 'openai' | 'gemini' | 'local-llm';
 export type WhisperBackend = 'faster-whisper-cpp' | 'whisper.cpp';
 
+// Performance monitoring and streaming interfaces
+export interface ProcessingProgress {
+  stage: 'segmentation' | 'transcription' | 'summarization' | 'complete';
+  progress: number; // 0-100
+  currentStep: string;
+  completedSteps: number;
+  totalSteps: number;
+  estimatedTimeRemaining?: number;
+  performanceMetrics?: PerformanceMetrics;
+}
+
+export interface PerformanceMetrics {
+  totalProcessingTime: number;
+  segmentationTime: number;
+  transcriptionTime: number;
+  summarizationTime: number;
+  silenceDetectionTime: number;
+  cacheHitRate: number;
+  parallelBatches: number;
+  averageBatchSize: number;
+  errorRate: number;
+}
+
+export interface StreamingResult {
+  partialTranscript?: string;
+  partialSummary?: string;
+  progress: ProcessingProgress;
+  intermediateResults?: Array<{
+    segmentIndex: number;
+    transcription: string;
+    timestamp: { start: number; end: number };
+  }>;
+}
+
+// Streaming callback types for progress updates
+export type ProgressCallback = (progress: ProcessingProgress) => void;
+export type StreamingCallback = (result: StreamingResult) => void;
+
 // Speaker diarization result
 export interface Speaker {
   id: string;
