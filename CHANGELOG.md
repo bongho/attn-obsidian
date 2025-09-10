@@ -165,6 +165,86 @@ interface ATTNSettings {
 
 ## [Unreleased]
 
+### 🎯 Planned Performance Optimization for v4.0.0 - Ultra-Long Meeting Support
+
+#### Performance Analysis & Bottlenecks Identified
+- **Current Processing Time**: 4-hour meetings take ~4-5 hours to process
+- **Target**: Reduce processing time by 67% (3x speed improvement)
+- **Key Bottlenecks**:
+  - Sequential STT processing of ~170 chunks (85-second segments)
+  - Linear chunk-by-chunk transcription workflow
+  - Full-text reprocessing in summarization pipeline
+  - Memory inefficient handling of large audio files
+
+#### 🚀 Proposed Optimization Strategies
+
+##### 1. Parallel STT Processing Architecture (8x Speed Improvement)
+- **Batch Processing**: Process 10-15 chunks simultaneously instead of sequential
+- **Rate Limit Management**: Intelligent batching to respect API rate limits
+- **Promise.allSettled()**: Concurrent processing with proper error handling
+- **Expected Impact**: Reduce STT time from ~240min to ~30min
+
+##### 2. Hierarchical Summarization System (3x Speed Improvement)
+- **Multi-Level Summarization**: 
+  - Level 1: Group 10 chunks → partial summaries
+  - Level 2: Consolidate partial summaries → final summary
+- **Context Preservation**: Maintain meeting flow and key discussions
+- **Expected Impact**: Reduce summary time from ~15min to ~5min
+
+##### 3. Dynamic Chunking Optimization
+- **Extended Chunk Size**: 85sec → 150sec for long meetings (reduce chunk count)
+- **Smart Silence Detection**: Enhanced silence detection with -30dB threshold
+- **Adaptive Segmentation**: Duration-based chunking strategy for >1 hour meetings
+- **Memory Optimization**: Stream processing to avoid full-file memory loading
+
+##### 4. Streaming & Caching Infrastructure
+- **Segment Caching**: Hash-based caching for duplicate/similar segments
+- **Streaming Processing**: Process audio segments as they're created
+- **Progressive Results**: Return partial results for better user experience
+- **Intermediate Cleanup**: Automatic cleanup of temporary files
+
+#### 📊 Performance Targets
+
+| Component | Current Time | Optimized Time | Improvement |
+|-----------|--------------|----------------|-------------|
+| Audio Segmentation | ~10min | ~3min | 3x faster |
+| STT Processing | ~240min | ~30min | **8x faster** |
+| Text Summarization | ~15min | ~5min | 3x faster |
+| **Total Pipeline** | **~265min** | **~43min** | **6x faster** |
+
+#### 🔧 Implementation Roadmap
+
+**Phase 1: Parallel STT (Highest Impact)**
+- [ ] Implement batch processing in `audioProcessor.ts:255-283`
+- [ ] Add concurrent chunk processing with Promise.allSettled()
+- [ ] Rate limit management and error recovery
+- [ ] Testing with large meeting files
+
+**Phase 2: Hierarchical Summarization**
+- [ ] Create multi-level summarization in `apiService.ts`
+- [ ] Implement chunk grouping and partial summary generation
+- [ ] Context preservation between summary levels
+- [ ] Integration with existing summary providers
+
+**Phase 3: Advanced Chunking**
+- [ ] Extend `audioSegmenter.ts` with duration-aware chunking
+- [ ] Implement streaming audio processing
+- [ ] Enhanced silence detection algorithms
+- [ ] Memory-efficient large file handling
+
+**Phase 4: Infrastructure Improvements**
+- [ ] Segment caching system implementation
+- [ ] Progressive result streaming to UI
+- [ ] Automatic cleanup and memory management
+- [ ] Performance monitoring and metrics
+
+#### 🧪 Testing Strategy
+- [ ] 4-hour meeting test suite
+- [ ] Performance benchmarking tools
+- [ ] Memory usage profiling
+- [ ] API rate limit testing
+- [ ] Error recovery validation
+
 ### Planned for v2.1
 - [ ] Multi-format audio support (MP3, WAV, etc.)
 - [ ] Full transcript template support (`{{transcript}}` placeholder)
