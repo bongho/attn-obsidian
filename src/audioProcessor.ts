@@ -237,6 +237,7 @@ export class AudioProcessor {
         minSilenceMs: settings.processing.minSilenceMs,
         hardSplitWindowSec: settings.processing.hardSplitWindowSec,
         preserveIntermediates: settings.processing.preserveIntermediates,
+        contextOverlapSec: settings.processing.contextOverlapSec, // New: Context overlap for better continuity
         enablePreprocessing: true, // Enable audio preprocessing for better results
         audioCodec: 'aac',
         audioBitrate: '128k'

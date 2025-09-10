@@ -112,6 +112,7 @@ export interface ProcessingSettings {
   minSilenceMs?: number;
   hardSplitWindowSec?: number;
   preserveIntermediates?: boolean;
+  contextOverlapSec?: number; // New: Context overlap for better continuity
   diarization?: DiarizationSettings;
 }
 
@@ -149,6 +150,7 @@ export interface SegmentOptions {
   enablePreprocessing?: boolean;
   audioCodec?: string;
   audioBitrate?: string;
+  contextOverlapSec?: number; // New: Context overlap between chunks
 }
 
 export interface SegmentResult {

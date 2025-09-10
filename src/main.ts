@@ -12,10 +12,63 @@ const DEFAULT_SETTINGS: ATTNSettings = {
   openaiApiKey: '', // Legacy field for backward compatibility
   saveFolderPath: '/',
   noteFilenameTemplate: '{{date:YYYY-MM-DD}}-{{filename}}-회의록',
-  noteContentTemplate: '# 회의록\n\n**원본 파일:** {{filename}}\n**생성 날짜:** {{date:YYYY-MM-DD}}\n\n## 요약\n\n{{summary}}',
+  noteContentTemplate: `# 🎯 {{date:YYYY-MM-DD}} 회의록
+
+## 📄 기본 정보
+- **파일:** {{filename}}
+- **생성일:** {{date:YYYY-MM-DD HH:mm:ss}}
+{{#if speakers}}
+- **참석자:** {{speakers}}
+{{/if}}
+
+---
+
+## 📋 회의 요약
+
+{{summary}}
+
+---
+
+## 🎙️ 전체 대화 내용
+
+{{#if speakerTranscript}}
+{{speakerTranscript}}
+{{else}}
+{{transcript}}
+{{/if}}
+
+---
+
+*🤖 이 회의록은 ATTN(Audio Transcription and Summarization)에 의해 자동 생성되었습니다.*`,
   noteContentTemplateFile: '',
   useTemplateFile: false,
-  systemPrompt: 'Please provide a clear and concise summary of the audio transcript. Focus on key points, decisions made, and action items. Please prefer Korean for the summary.',
+  systemPrompt: `당신은 1시간 회의록 전문 요약 시스템입니다. 다음 구조로 회의 내용을 분석하고 요약해주세요:
+
+## 회의 개요
+- 참석자 및 발언 시간 분석
+- 주요 안건 및 논의 흐름
+
+## 핵심 내용 요약
+- 각 안건별 주요 논의점
+- 중요한 의견 및 관점들
+- 논의 과정에서 나온 문제점과 해결방안
+
+## 의사결정 사항
+- 확정된 결정 내용
+- 결정에 이르는 과정과 근거
+- 보류되거나 추가 검토가 필요한 사항
+
+## 액션 아이템
+- 담당자별 할 일 정리
+- 일정 및 마감일
+- 후속 회의 계획
+
+## 다음 단계
+- 향후 진행 방향
+- 필요한 준비사항
+- 관련 이해관계자들
+
+회의의 전체적인 맥락과 흐름을 고려하여 일관성 있게 정리해주시고, 중요도에 따라 우선순위를 매겨서 제시해주세요.`,
   audioSpeedMultiplier: 1,
   ffmpegPath: '',
   stt: {
@@ -32,19 +85,20 @@ const DEFAULT_SETTINGS: ATTNSettings = {
   processing: {
     enableChunking: true,
     maxUploadSizeMB: 24.5,
-    maxChunkDurationSec: 85,
+    maxChunkDurationSec: 150, // Increased for better context (2.5 minutes)
     targetSampleRateHz: 16000,
     targetChannels: 1,
-    silenceThresholdDb: -35,
-    minSilenceMs: 400,
-    hardSplitWindowSec: 30,
+    silenceThresholdDb: -30, // More sensitive for meeting audio
+    minSilenceMs: 800, // Longer pauses typical in meetings
+    hardSplitWindowSec: 45, // Increased for better natural breaks
     preserveIntermediates: false,
+    contextOverlapSec: 10, // New: Context preservation between chunks
     diarization: {
-      enabled: false,
+      enabled: true, // 회의록에서 화자 분리는 중요하므로 기본 활성화
       provider: 'pyannote',
-      minSpeakers: 1,
-      maxSpeakers: 10,
-      mergeThreshold: 1.0
+      minSpeakers: 2, // 회의는 보통 2명 이상
+      maxSpeakers: 8, // 대부분의 회의는 8명 이하
+      mergeThreshold: 2.0 // 회의에서는 더 관대한 병합 임계값
     }
   },
   logging: {

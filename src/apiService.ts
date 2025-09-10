@@ -146,10 +146,26 @@ export class ApiService {
       // Use custom system prompt if provided, otherwise use settings
       const systemPrompt = customSystemPrompt || this.settings.systemPrompt;
 
+      // Enhanced context information for better meeting summarization
+      const estimatedDuration = verboseResult.duration || this.estimateAudioDuration(verboseResult);
+      const speakerInfo = verboseResult.speakers ? 
+        `참석자: ${verboseResult.speakers.length}명` : 
+        '참석자: 화자 분리 정보 없음';
+      
+      const meetingContext = `
+이것은 약 ${Math.round(estimatedDuration / 60)}분간의 회의 내용입니다.
+${speakerInfo}
+총 ${verboseResult.segments.length}개의 발언 구간으로 구성되어 있습니다.
+
+회의의 전체적인 흐름과 맥락을 고려하여 일관성 있게 요약해주세요.
+`;
+
       const input = {
-        text: verboseResult.text,
+        text: meetingContext + '\n\n' + verboseResult.text,
         segments: verboseResult.segments,
-        language: verboseResult.language
+        language: verboseResult.language,
+        duration: estimatedDuration,
+        speakers: verboseResult.speakers
       };
 
       const result = await summaryProvider.summarize(input, {
@@ -168,5 +184,15 @@ export class ApiService {
       }
       throw error;
     }
+  }
+
+  private estimateAudioDuration(verboseResult: VerboseTranscriptionResult): number {
+    if (!verboseResult.segments || verboseResult.segments.length === 0) {
+      return 0;
+    }
+    
+    // Find the last segment's end time
+    const lastSegment = verboseResult.segments[verboseResult.segments.length - 1];
+    return lastSegment.end || 0;
   }
 }

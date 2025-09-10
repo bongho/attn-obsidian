@@ -408,21 +408,27 @@ describe('ATTNPlugin Integration', () => {
 
     test('should handle API service errors', async () => {
       const apiError = new Error('API service failed');
-      mockApiService.processAudioFile.mockRejectedValue(apiError);
       
-      const mockMenu = new MockMenu();
-      const m4aFile = new MockTFile('meeting.m4a', 'm4a');
-
-      fileMenuHandler(mockMenu as any, m4aFile as any);
+      // Setup plugin with proper mocks
+      const plugin = new ATTNPlugin(mockApp as any, {} as any);
+      await plugin.loadSettings();
+      
+      // Mock the API service to throw error
+      const mockApiServiceInstance = {
+        processAudioFile: jest.fn().mockRejectedValue(apiError)
+      };
+      mockApiService.mockImplementation(() => mockApiServiceInstance);
       
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
       
-      await mockMenu.clickItem('ATTN: 요약 노트 생성하기');
-      await new Promise(resolve => setTimeout(resolve, 0));
+      const m4aFile = new MockTFile('meeting.m4a', 'm4a');
+      
+      // Directly call processAudioFile
+      await plugin.processAudioFile(m4aFile as any);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('오디오 처리 중 오류'),
-        expect.any(Error)
+        apiError
       );
       
       consoleSpy.mockRestore();
