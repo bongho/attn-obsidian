@@ -25,18 +25,26 @@ export class AudioProcessor {
   }
 
   private initializeDiarizationService(settings: ATTNSettings): void {
-    if (settings.processing.diarization?.enabled && !this.diarizationService) {
-      try {
-        this.diarizationService = new SpeakerDiarizationService(settings.processing.diarization);
-        console.log('🎤 Speaker diarization service initialized');
-      } catch (error) {
-        console.warn('🎤 Failed to initialize speaker diarization:', error);
-        console.log('🎤 Continuing without speaker diarization');
-        // Disable diarization in settings to prevent future attempts
-        if (settings.processing.diarization) {
-          settings.processing.diarization.enabled = false;
-        }
-      }
+    // Skip diarization initialization unless explicitly enabled and configured
+    if (!settings.processing.diarization?.enabled || this.diarizationService) {
+      return;
+    }
+
+    // Only attempt initialization if API key is provided
+    if (!settings.processing.diarization.apiKey) {
+      console.log('🎤 Speaker diarization disabled - no API key provided');
+      settings.processing.diarization.enabled = false;
+      return;
+    }
+
+    try {
+      this.diarizationService = new SpeakerDiarizationService(settings.processing.diarization);
+      console.log('🎤 Speaker diarization service initialized');
+    } catch (error) {
+      console.warn('🎤 Failed to initialize speaker diarization:', error);
+      console.log('🎤 Continuing without speaker diarization');
+      // Disable diarization in settings to prevent future attempts
+      settings.processing.diarization.enabled = false;
     }
   }
 

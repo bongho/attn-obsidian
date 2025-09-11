@@ -67,6 +67,12 @@ export class ApiService {
     this.initializePerformanceMetrics();
     
     try {
+      // Validate audio file before processing
+      const validationResult = this.validateAudioFile(audioFile);
+      if (!validationResult.isValid) {
+        throw new Error(`오디오 파일 검증 실패: ${validationResult.error}`);
+      }
+
       // Emit initial progress
       this.emitProgress({
         stage: 'segmentation',
@@ -80,6 +86,8 @@ export class ApiService {
       const maxSizeMB = this.settings.processing?.maxUploadSizeMB || 24.5;
       const maxSizeBytes = maxSizeMB * 1024 * 1024;
       const estimatedDuration = this.estimateFileDuration(audioFile.size);
+      
+      console.log(`Processing audio: ${audioFile.name}, size: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB, estimated: ${Math.round(estimatedDuration / 60)}min`);
       
       let verboseResult: VerboseTranscriptionResult;
       
@@ -233,6 +241,37 @@ export class ApiService {
   private estimateFileDuration(sizeBytes: number): number {
     // Rough estimate: ~1MB per minute for compressed audio
     return (sizeBytes / (1024 * 1024)) * 60;
+  }
+
+  private validateAudioFile(audioFile: File): { isValid: boolean; error?: string } {
+    // Check file size
+    if (audioFile.size === 0) {
+      return { isValid: false, error: '오디오 파일이 비어있습니다.' };
+    }
+    
+    if (audioFile.size < 1000) { // Less than 1KB
+      return { isValid: false, error: '오디오 파일이 너무 작습니다. 유효한 오디오 콘텐츠가 있는지 확인해주세요.' };
+    }
+    
+    if (audioFile.size > 100 * 1024 * 1024) { // Over 100MB
+      console.warn(`Large audio file: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB`);
+    }
+    
+    // Check file extension
+    const validExtensions = ['.m4a', '.mp3', '.wav', '.flac', '.aac', '.ogg', '.webm', '.mp4'];
+    const fileExtension = audioFile.name.toLowerCase().substring(audioFile.name.lastIndexOf('.'));
+    
+    if (!validExtensions.includes(fileExtension)) {
+      console.warn(`Unsupported file extension: ${fileExtension}. Supported: ${validExtensions.join(', ')}`);
+      // Don't fail, just warn - OpenAI might support it
+    }
+    
+    // Check MIME type if available
+    if (audioFile.type && !audioFile.type.startsWith('audio/') && !audioFile.type.startsWith('video/')) {
+      console.warn(`Unexpected MIME type: ${audioFile.type}`);
+    }
+    
+    return { isValid: true };
   }
 
   async transcribeAudio(audioFile: File, options: { format: 'verbose_json' }): Promise<VerboseTranscriptionResult> {

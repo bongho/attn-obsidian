@@ -104,7 +104,8 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
       buffer = new Uint8Array(input);
     }
 
-    return new File([buffer], 'audio.m4a', { type: 'audio/m4a' });
+    // Use a more generic audio type for better compatibility
+    return new File([buffer], 'audio.m4a', { type: 'audio/mp4' }); // More widely supported than audio/m4a
   }
 
   private getApiKeyFromEnv(): string | undefined {

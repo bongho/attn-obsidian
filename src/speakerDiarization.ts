@@ -105,10 +105,19 @@ export class SpeakerDiarizationService {
   }
 
   private async diarizeWithPyannote(audioFile: File | Buffer | string): Promise<SpeakerSegment[]> {
-    // Check if Python is available before proceeding
+    // Check if Python and pyannote are available before proceeding
     const pythonCommand = await this.findPythonCommand();
     if (!pythonCommand) {
       console.warn('Python not found, disabling speaker diarization');
+      return [];
+    }
+
+    // Check if pyannote.audio is installed
+    const hasPyannote = await this.checkPyannoteInstallation(pythonCommand);
+    if (!hasPyannote) {
+      console.warn('🎤 pyannote.audio not installed. Speaker diarization disabled.');
+      console.warn('🎤 To enable speaker diarization, install pyannote.audio:');
+      console.warn('🎤 pip install pyannote.audio');
       return [];
     }
 
@@ -121,7 +130,11 @@ export class SpeakerDiarizationService {
       const pythonScript = `
 import sys
 import json
-from pyannote.audio import Pipeline
+try:
+    from pyannote.audio import Pipeline
+except ImportError:
+    print(json.dumps({"error": "pyannote.audio not installed"}), file=sys.stderr)
+    sys.exit(1)
 
 try:
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", 
@@ -146,7 +159,12 @@ except Exception as e:
       const scriptPath = join(this.tempDir, `diarize_${Date.now()}.py`);
       writeFileSync(scriptPath, pythonScript);
       
-      const { stdout } = await execAsync(`${pythonCommand} "${scriptPath}"`);
+      const { stdout, stderr } = await execAsync(`${pythonCommand} "${scriptPath}"`);
+      
+      if (stderr && stderr.includes('error')) {
+        console.warn('Pyannote script error:', stderr);
+        return [];
+      }
       
       let segments;
       try {
@@ -179,6 +197,15 @@ except Exception as e:
     } catch (error) {
       console.error('Pyannote diarization failed:', error);
       return [];
+    }
+  }
+
+  private async checkPyannoteInstallation(pythonCommand: string): Promise<boolean> {
+    try {
+      await execAsync(`${pythonCommand} -c "import pyannote.audio"`);
+      return true;
+    } catch (error) {
+      return false;
     }
   }
 
