@@ -18,6 +18,13 @@ export interface ProcessAudioResult {
   processingTimeMs: number;
 }
 
+// Constants for file size limits
+const FILE_SIZE_LIMITS = {
+  OPENAI_API_LIMIT_MB: 25, // Official OpenAI API limit
+  FORMDATA_OVERHEAD_FACTOR: 1.15, // ~15% overhead for FormData encoding
+  CONSERVATIVE_LIMIT_MB: 23, // Conservative limit to prevent 413 errors
+} as const;
+
 export class ApiService {
   private config: ConfigLoader;
   private settings: ATTNSettings;
@@ -82,23 +89,16 @@ export class ApiService {
         totalSteps: 3
       });
 
-      // Check if file is large enough to require chunking
-      // OpenAI API has a 25MB limit, but FormData adds overhead (~3-5%)
-      // So we use a more conservative limit to prevent 413 errors
-      const maxSizeMB = Math.min(this.settings.processing?.maxUploadSizeMB || 24.5, 23.0); // More conservative limit
-      const maxSizeBytes = maxSizeMB * 1024 * 1024;
-      
-      console.log(`🔍 File size check: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB vs limit ${maxSizeMB}MB`);
+      // Determine processing strategy based on file size
+      const fileSizeAnalysis = this.analyzeFileSize(audioFile);
       const estimatedDuration = this.estimateFileDuration(audioFile.size);
       
-      console.log(`Processing audio: ${audioFile.name}, size: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB, estimated: ${Math.round(estimatedDuration / 60)}min`);
+      console.log(`Processing audio: ${audioFile.name}, size: ${fileSizeAnalysis.sizeMB}MB, estimated: ${Math.round(estimatedDuration / 60)}min`);
+      console.log(`🔍 Processing strategy: ${fileSizeAnalysis.shouldUseChunking ? 'CHUNKING' : 'DIRECT'} (${fileSizeAnalysis.reason})`);
       
       let verboseResult: VerboseTranscriptionResult;
       
-      const shouldUseChunking = audioFile.size > maxSizeBytes || !this.settings.processing?.enableChunking;
-      console.log(`🔍 Processing decision: shouldUseChunking=${shouldUseChunking}, fileSize=${audioFile.size}, maxBytes=${maxSizeBytes}, chunkingEnabled=${this.settings.processing?.enableChunking}`);
-      
-      if (audioFile.size > maxSizeBytes) {
+      if (fileSizeAnalysis.shouldUseChunking) {
         if (!this.settings.processing?.enableChunking) {
           console.warn('⚠️ File exceeds size limit but chunking is disabled! This will likely fail.');
           console.warn('⚠️ Attempting direct transcription anyway...');
@@ -108,12 +108,10 @@ export class ApiService {
         this.emitProgress({
           stage: 'transcription',
           progress: 10,
-          currentStep: `Processing large file (${(audioFile.size / 1024 / 1024).toFixed(1)}MB, ~${Math.round(estimatedDuration / 60)}min) with chunking`,
+          currentStep: `Processing large file (${fileSizeAnalysis.sizeMB}MB, ~${Math.round(estimatedDuration / 60)}min) with chunking`,
           completedSteps: 0,
           totalSteps: Math.ceil(estimatedDuration / 150) + 2 // Estimated chunks + summarization
         });
-        
-        console.log('🔍 TRIGGERING CHUNKING WORKFLOW for oversized file');
         verboseResult = await this.processWithChunking(audioFile);
       } else {
         // Direct transcription for smaller files
@@ -125,7 +123,7 @@ export class ApiService {
           totalSteps: 2
         });
         
-        console.log('🔍 Using direct transcription for standard-sized file');
+        // Direct transcription is used automatically for smaller files
         verboseResult = await this.transcribeAudioVerbose(audioFile);
       }
       
@@ -138,7 +136,7 @@ export class ApiService {
           firstSegment: verboseResult.segments?.[0]?.text?.substring(0, 100) || 'N/A',
           audioFileSize: audioFile.size,
           audioFileName: audioFile.name,
-          processingMode: audioFile.size > maxSizeBytes ? 'chunked' : 'direct',
+          processingMode: fileSizeAnalysis.shouldUseChunking ? 'chunked' : 'direct',
           duration: verboseResult.duration,
           language: verboseResult.language
         });
@@ -267,6 +265,40 @@ export class ApiService {
     if (this.config.isDebugMode()) {
       console.log(`🔧 ATTN Progress: ${progress.stage} - ${progress.currentStep} (${progress.progress}%)`);
     }
+  }
+
+  private analyzeFileSize(audioFile: File): {
+    sizeMB: string;
+    sizeBytes: number;
+    shouldUseChunking: boolean;
+    reason: string;
+  } {
+    const sizeBytes = audioFile.size;
+    const sizeMB = (sizeBytes / 1024 / 1024).toFixed(2);
+    const configuredLimitMB = this.settings.processing?.maxUploadSizeMB || FILE_SIZE_LIMITS.CONSERVATIVE_LIMIT_MB;
+    const effectiveLimitMB = Math.min(configuredLimitMB, FILE_SIZE_LIMITS.CONSERVATIVE_LIMIT_MB);
+    const effectiveLimitBytes = effectiveLimitMB * 1024 * 1024;
+    
+    let shouldUseChunking = false;
+    let reason = '';
+    
+    if (sizeBytes > effectiveLimitBytes) {
+      shouldUseChunking = true;
+      reason = `File size (${sizeMB}MB) exceeds limit (${effectiveLimitMB}MB)`;
+    } else if (!this.settings.processing?.enableChunking) {
+      shouldUseChunking = false;
+      reason = 'File within limits, chunking disabled';
+    } else {
+      shouldUseChunking = false;
+      reason = `File within limits (${sizeMB}MB <= ${effectiveLimitMB}MB)`;
+    }
+    
+    return {
+      sizeMB,
+      sizeBytes,
+      shouldUseChunking,
+      reason
+    };
   }
 
   private estimateFileDuration(sizeBytes: number): number {

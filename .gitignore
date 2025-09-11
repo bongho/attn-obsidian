@@ -33,6 +33,15 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Test files and audio samples
+test-*.wav
+test-*.m4a
+debug-*.js
+debug-*.ts
+*-test.mjs
+simple-test.mjs
+full-workflow-test.mjs
+
 # Runtime data
 pids
 *.pid
