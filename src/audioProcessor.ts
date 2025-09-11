@@ -26,7 +26,17 @@ export class AudioProcessor {
 
   private initializeDiarizationService(settings: ATTNSettings): void {
     if (settings.processing.diarization?.enabled && !this.diarizationService) {
-      this.diarizationService = new SpeakerDiarizationService(settings.processing.diarization);
+      try {
+        this.diarizationService = new SpeakerDiarizationService(settings.processing.diarization);
+        console.log('🎤 Speaker diarization service initialized');
+      } catch (error) {
+        console.warn('🎤 Failed to initialize speaker diarization:', error);
+        console.log('🎤 Continuing without speaker diarization');
+        // Disable diarization in settings to prevent future attempts
+        if (settings.processing.diarization) {
+          settings.processing.diarization.enabled = false;
+        }
+      }
     }
   }
 
@@ -277,13 +287,21 @@ export class AudioProcessor {
       
       // Apply speaker diarization to the complete merged result if enabled
       if (this.diarizationService) {
-        mergedResult = await this.diarizationService.enhanceTranscriptionWithSpeakers(mergedResult, audioFile);
-        
-        await logger.log('info', {
-          ...logContext,
-          message: 'Applied speaker diarization to merged result',
-          speakerCount: mergedResult.speakers?.length || 0
-        });
+        try {
+          mergedResult = await this.diarizationService.enhanceTranscriptionWithSpeakers(mergedResult, audioFile);
+          
+          await logger.log('info', {
+            ...logContext,
+            message: 'Applied speaker diarization to merged result',
+            speakerCount: mergedResult.speakers?.length || 0
+          });
+        } catch (error) {
+          console.warn('🎤 Speaker diarization failed, continuing without it:', error);
+          await logger.log('warn', {
+            ...logContext,
+            message: 'Speaker diarization failed, continuing without speaker information'
+          });
+        }
       }
       
       await logger.log('info', {
@@ -305,7 +323,29 @@ export class AudioProcessor {
   }
 
   mergeVerboseResults(chunkResults: VerboseTranscriptionResult[], segments: SegmentResult[]): VerboseTranscriptionResult {
-    const combinedText = chunkResults.map(result => result.text).join(' ');
+    // Filter out empty results and log them
+    const validResults = chunkResults.filter((result, index) => {
+      const hasContent = result.text && result.text.trim();
+      if (!hasContent) {
+        console.log(`Chunk ${index + 1} has no content, skipping from merge`);
+      }
+      return hasContent;
+    });
+    
+    if (validResults.length === 0) {
+      console.warn('All chunks are empty, returning empty result');
+      return {
+        text: '',
+        language: chunkResults[0]?.language || 'ko',
+        duration: segments[segments.length - 1]?.endSec || 0,
+        segments: [],
+        raw: { chunks: [] }
+      };
+    }
+    
+    console.log(`Merging ${validResults.length}/${chunkResults.length} valid chunks`);
+    
+    const combinedText = validResults.map(result => result.text).join(' ');
     const combinedSegments = [];
     const rawChunks = [];
     
@@ -313,6 +353,11 @@ export class AudioProcessor {
     for (let i = 0; i < chunkResults.length; i++) {
       const chunkResult = chunkResults[i];
       const segmentOffset = segments[i].startSec;
+      
+      // Skip empty chunks
+      if (!chunkResult.text || !chunkResult.text.trim()) {
+        continue;
+      }
       
       // Collect raw data
       if (chunkResult.raw) {
@@ -322,20 +367,24 @@ export class AudioProcessor {
       // Merge segments with timeline offset
       if (chunkResult.segments) {
         for (const segment of chunkResult.segments) {
-          combinedSegments.push({
-            id: segmentId++,
-            start: segment.start + segmentOffset,
-            end: segment.end + segmentOffset,
-            text: segment.text,
-            words: segment.words?.map(word => ({
-              start: word.start + segmentOffset,
-              end: word.end + segmentOffset,
-              word: word.word
-            }))
-          });
+          if (segment.text && segment.text.trim()) {
+            combinedSegments.push({
+              id: segmentId++,
+              start: segment.start + segmentOffset,
+              end: segment.end + segmentOffset,
+              text: segment.text,
+              words: segment.words?.map(word => ({
+                start: word.start + segmentOffset,
+                end: word.end + segmentOffset,
+                word: word.word
+              }))
+            });
+          }
         }
       }
     }
+
+    console.log(`Merge result: ${combinedText.length} chars, ${combinedSegments.length} segments`);
 
     return {
       text: combinedText,
@@ -491,9 +540,31 @@ export class AudioProcessor {
           // Transcribe chunk with retry logic
           const result = await this.transcribeChunkWithRetry(chunkFile, settings, chunkLogContext, logger);
           
+          // Validate transcription result
+          if (!result.text || result.text.trim() === '') {
+            console.warn(`Empty transcription for chunk ${globalIndex + 1}, checking segments...`);
+            
+            // Try to recover from segments
+            if (result.segments && result.segments.length > 0) {
+              const recoveredText = result.segments.map(seg => seg.text).join(' ').trim();
+              if (recoveredText) {
+                result.text = recoveredText;
+                console.log(`Recovered text from segments for chunk ${globalIndex + 1}: ${recoveredText.substring(0, 100)}...`);
+              }
+            }
+            
+            // Still empty after recovery attempt
+            if (!result.text || result.text.trim() === '') {
+              console.warn(`Chunk ${globalIndex + 1} has no transcribable content (${segment.endSec - segment.startSec}s duration)`);
+              // Create minimal result to avoid breaking the pipeline
+              result.text = '';
+              result.segments = [];
+            }
+          }
+          
           await logger.log('info', {
             ...chunkLogContext,
-            message: `Successfully transcribed chunk ${globalIndex + 1}/${segments.length}`
+            message: `Successfully transcribed chunk ${globalIndex + 1}/${segments.length} (${result.text.length} chars)`
           });
           
           return { success: true as const, result, index: globalIndex };

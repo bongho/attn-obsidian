@@ -16,11 +16,34 @@ const execAsync = promisify(exec);
 export class SpeakerDiarizationService {
   private tempDir: string;
   private settings: DiarizationSettings;
+  private pythonCommand: string | null = null;
 
   constructor(settings: DiarizationSettings) {
     this.settings = settings;
     this.tempDir = join(tmpdir(), 'attn-diarization');
     this.ensureTempDir();
+  }
+
+  private async findPythonCommand(): Promise<string | null> {
+    if (this.pythonCommand) {
+      return this.pythonCommand;
+    }
+
+    const candidates = ['python3', 'python', '/usr/bin/python3', '/usr/bin/python', '/usr/local/bin/python3'];
+    
+    for (const candidate of candidates) {
+      try {
+        await execAsync(`${candidate} --version`);
+        console.log(`Found Python at: ${candidate}`);
+        this.pythonCommand = candidate;
+        return candidate;
+      } catch (error) {
+        continue;
+      }
+    }
+    
+    console.warn('No Python installation found. Available commands:', candidates.join(', '));
+    return null;
   }
 
   async diarizeAudio(audioFile: File | Buffer | string): Promise<SpeakerSegment[]> {
@@ -82,7 +105,15 @@ export class SpeakerDiarizationService {
   }
 
   private async diarizeWithPyannote(audioFile: File | Buffer | string): Promise<SpeakerSegment[]> {
-    // Implementation for pyannote.audio diarization
+    // Check if Python is available before proceeding
+    const pythonCommand = await this.findPythonCommand();
+    if (!pythonCommand) {
+      console.warn('Python not found, disabling speaker diarization');
+      return [];
+    }
+
+    console.log(`Using Python command: ${pythonCommand}`);
+    
     const audioPath = await this.prepareAudioFile(audioFile);
     
     try {
@@ -92,27 +123,44 @@ import sys
 import json
 from pyannote.audio import Pipeline
 
-pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", 
-                                   use_auth_token="${this.settings.apiKey}")
-
-diarization = pipeline("${audioPath}")
-
-segments = []
-for turn, _, speaker in diarization.itertracks(yield_label=True):
-    segments.append({
-        "start": turn.start,
-        "end": turn.end,
-        "speaker": speaker
-    })
-
-print(json.dumps(segments))
+try:
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", 
+                                       use_auth_token="${this.settings.apiKey}")
+    
+    diarization = pipeline("${audioPath}")
+    
+    segments = []
+    for turn, _, speaker in diarization.itertracks(yield_label=True):
+        segments.append({
+            "start": turn.start,
+            "end": turn.end,
+            "speaker": speaker
+        })
+    
+    print(json.dumps(segments))
+except Exception as e:
+    print(json.dumps({"error": str(e)}), file=sys.stderr)
+    sys.exit(1)
       `;
       
       const scriptPath = join(this.tempDir, `diarize_${Date.now()}.py`);
       writeFileSync(scriptPath, pythonScript);
       
-      const { stdout } = await execAsync(`python "${scriptPath}"`);
-      const segments = JSON.parse(stdout);
+      const { stdout } = await execAsync(`${pythonCommand} "${scriptPath}"`);
+      
+      let segments;
+      try {
+        segments = JSON.parse(stdout);
+      } catch (parseError) {
+        console.error('Failed to parse diarization output:', stdout);
+        return [];
+      }
+      
+      // Check for error response
+      if (segments.error) {
+        console.error('Pyannote error:', segments.error);
+        return [];
+      }
       
       // Clean up
       unlinkSync(scriptPath);

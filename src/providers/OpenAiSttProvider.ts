@@ -39,15 +39,44 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
     });
 
     if (!response.ok) {
-      await this.handleApiError(response);
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessage = errorData.error?.message || response.statusText;
+      const errorCode = errorData.error?.code || response.status;
+      const errorType = errorData.error?.type || 'api_error';
+      
+      console.error('OpenAI STT API Error:', {
+        status: response.status,
+        message: errorMessage,
+        code: errorCode,
+        type: errorType,
+        model: options.model || this.settings.model
+      });
+      
+      throw new Error(`OpenAI STT API error (${response.status}): ${errorMessage}`);
     }
 
     const result = await response.json();
 
+    // Validate and enhance the response
+    if (!result.text && (!result.segments || result.segments.length === 0)) {
+      console.warn('OpenAI STT returned empty result:', {
+        hasText: !!result.text,
+        hasSegments: !!result.segments,
+        segmentCount: result.segments?.length || 0
+      });
+    }
+    
     // Ensure the response has the verbose_json structure
     if (options.format === 'verbose_json' && result.segments) {
+      // Try to recover text from segments if main text is empty
+      let finalText = result.text || '';
+      if (!finalText && result.segments && result.segments.length > 0) {
+        finalText = result.segments.map((seg: any) => seg.text).join(' ').trim();
+        console.log('Recovered text from segments:', finalText.substring(0, 200));
+      }
+      
       return {
-        text: result.text,
+        text: finalText,
         language: result.language,
         duration: result.duration,
         segments: result.segments,

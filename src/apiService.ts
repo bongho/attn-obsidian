@@ -108,7 +108,28 @@ export class ApiService {
       }
       
       if (!verboseResult.text || verboseResult.text.trim() === '') {
-        throw new Error('음성 인식 결과가 비어있습니다.');
+        console.error('Empty transcription result:', {
+          hasText: !!verboseResult.text,
+          textLength: verboseResult.text?.length || 0,
+          segmentCount: verboseResult.segments?.length || 0,
+          firstSegment: verboseResult.segments?.[0]?.text?.substring(0, 100) || 'N/A',
+          audioFileSize: audioFile.size,
+          audioFileName: audioFile.name,
+          processingMode: audioFile.size > maxSizeBytes ? 'chunked' : 'direct'
+        });
+        
+        // Try to recover from segments if main text is empty
+        if (verboseResult.segments && verboseResult.segments.length > 0) {
+          const recoveredText = verboseResult.segments.map(seg => seg.text).join(' ').trim();
+          if (recoveredText) {
+            console.log('🚑 Recovered text from segments:', recoveredText.substring(0, 200) + '...');
+            verboseResult.text = recoveredText;
+          } else {
+            throw new Error('음성 인식 결과가 비어있습니다. 오디오 파일에 음성이 포함되어 있는지 확인해주세요.');
+          }
+        } else {
+          throw new Error('음성 인식 결과가 비어있습니다. 오디오 파일에 음성이 포함되어 있는지 확인해주세요.');
+        }
       }
 
       // Update transcription completion
