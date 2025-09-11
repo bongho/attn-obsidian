@@ -83,24 +83,37 @@ export class ApiService {
       });
 
       // Check if file is large enough to require chunking
-      const maxSizeMB = this.settings.processing?.maxUploadSizeMB || 24.5;
+      // OpenAI API has a 25MB limit, but FormData adds overhead (~3-5%)
+      // So we use a more conservative limit to prevent 413 errors
+      const maxSizeMB = Math.min(this.settings.processing?.maxUploadSizeMB || 24.5, 23.0); // More conservative limit
       const maxSizeBytes = maxSizeMB * 1024 * 1024;
+      
+      console.log(`🔍 File size check: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB vs limit ${maxSizeMB}MB`);
       const estimatedDuration = this.estimateFileDuration(audioFile.size);
       
       console.log(`Processing audio: ${audioFile.name}, size: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB, estimated: ${Math.round(estimatedDuration / 60)}min`);
       
       let verboseResult: VerboseTranscriptionResult;
       
-      if (audioFile.size > maxSizeBytes && this.settings.processing?.enableChunking) {
+      const shouldUseChunking = audioFile.size > maxSizeBytes || !this.settings.processing?.enableChunking;
+      console.log(`🔍 Processing decision: shouldUseChunking=${shouldUseChunking}, fileSize=${audioFile.size}, maxBytes=${maxSizeBytes}, chunkingEnabled=${this.settings.processing?.enableChunking}`);
+      
+      if (audioFile.size > maxSizeBytes) {
+        if (!this.settings.processing?.enableChunking) {
+          console.warn('⚠️ File exceeds size limit but chunking is disabled! This will likely fail.');
+          console.warn('⚠️ Attempting direct transcription anyway...');
+        }
+        
         // Use chunking workflow: transcribe all chunks first, then process complete result
         this.emitProgress({
           stage: 'transcription',
           progress: 10,
-          currentStep: `Processing large file (${(audioFile.size / 1024 / 1024).toFixed(1)}MB, ~${Math.round(estimatedDuration / 60)}min)`,
+          currentStep: `Processing large file (${(audioFile.size / 1024 / 1024).toFixed(1)}MB, ~${Math.round(estimatedDuration / 60)}min) with chunking`,
           completedSteps: 0,
           totalSteps: Math.ceil(estimatedDuration / 150) + 2 // Estimated chunks + summarization
         });
         
+        console.log('🔍 TRIGGERING CHUNKING WORKFLOW for oversized file');
         verboseResult = await this.processWithChunking(audioFile);
       } else {
         // Direct transcription for smaller files
@@ -112,6 +125,7 @@ export class ApiService {
           totalSteps: 2
         });
         
+        console.log('🔍 Using direct transcription for standard-sized file');
         verboseResult = await this.transcribeAudioVerbose(audioFile);
       }
       
@@ -306,19 +320,27 @@ export class ApiService {
   }
 
   private async processWithChunking(audioFile: File): Promise<VerboseTranscriptionResult> {
+    console.log('🔍 CHUNKING WORKFLOW: Starting processWithChunking for file:', {
+      name: audioFile.name,
+      size: `${(audioFile.size / 1024 / 1024).toFixed(2)}MB`,
+      type: audioFile.type,
+      enableChunking: this.settings.processing?.enableChunking
+    });
+    
     const { AudioProcessor } = await import('./audioProcessor');
     const audioProcessor = new AudioProcessor();
     
-    if (this.config.isDebugMode()) {
-      console.log('🔧 ATTN Debug: Starting chunked transcription workflow');
-    }
+    console.log('🔍 CHUNKING WORKFLOW: AudioProcessor created, calling transcribeWithChunking...');
 
     // Step 1: Transcribe all chunks (STT only, no summarization)
     const chunkTranscriptionResult = await audioProcessor.transcribeWithChunking(audioFile, this.settings);
     
-    if (this.config.isDebugMode()) {
-      console.log(`🔧 ATTN Debug: Completed transcription of ${chunkTranscriptionResult.segments.length} segments`);
-    }
+    console.log('🔍 CHUNKING WORKFLOW: transcribeWithChunking completed', {
+      hasText: !!chunkTranscriptionResult.text,
+      textLength: chunkTranscriptionResult.text?.length || 0,
+      segmentCount: chunkTranscriptionResult.segments?.length || 0,
+      previewText: chunkTranscriptionResult.text?.substring(0, 100) || 'No text'
+    });
 
     return chunkTranscriptionResult;
   }
