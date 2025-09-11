@@ -274,7 +274,26 @@ export class AudioProcessor {
         estimatedChunks: Math.ceil(estimatedDuration / (segmentOptions.maxChunkDurationSec || 150))
       });
 
+      console.log('🔍 SEGMENTATION: About to call segmenter.segmentAudio with options:', {
+        maxUploadSizeMB: segmentOptions.maxUploadSizeMB,
+        maxChunkDurationSec: segmentOptions.maxChunkDurationSec,
+        enablePreprocessing: segmentOptions.enablePreprocessing,
+        audioCodec: segmentOptions.audioCodec
+      });
+      
       const segments = await segmenter.segmentAudio(audioFile, segmentOptions);
+      
+      console.log('🔍 SEGMENTATION: segmentAudio returned:', {
+        segmentCount: segments.length,
+        totalSize: segments.reduce((sum, seg) => sum + seg.sizeBytes, 0),
+        segmentSizes: segments.map(seg => `${(seg.sizeBytes / 1024 / 1024).toFixed(1)}MB`).join(', ')
+      });
+      
+      if (segments.length === 0) {
+        console.error('🚨 SEGMENTATION FAILED: No segments returned from AudioSegmenter');
+        console.error('🚨 This is likely why transcription is failing');
+        console.error('🚨 Check FFmpeg availability and audio file format');
+      }
       
       // Validate segments have consistent timeline
       this.validateSegmentTimeline(segments);

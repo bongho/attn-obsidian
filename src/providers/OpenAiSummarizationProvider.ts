@@ -52,13 +52,39 @@ export class OpenAiSummarizationProvider implements SummarizationProvider {
       }
     }
     
-    // Final check and truncation if still too long
-    if (this.estimateTokens(userPrompt) > maxTokens * 0.8) {
-      const targetLength = Math.floor(maxTokens * 0.8 * 3); // Roughly 3 chars per token
-      userPrompt = userPrompt.substring(0, targetLength) + '\n\n[텍스트가 너무 길어 일부가 생략되었습니다. 위 내용을 바탕으로 회의록을 작성해주세요.]';
+    // Extremely aggressive text truncation for GPT-4's limited context
+    const maxInputTokens = maxTokens * 0.4; // Use only 40% of tokens for input, 60% for output
+    
+    if (this.estimateTokens(userPrompt) > maxInputTokens) {
+      // Calculate how much text we can safely include
+      const targetLength = Math.floor(maxInputTokens * 3); // Roughly 3 chars per token
+      const truncatedText = input.text.substring(0, targetLength * 0.9); // Leave room for prompt text
+      
+      console.log('🔍 TEXT TRUNCATION:', {
+        originalLength: input.text.length,
+        targetLength: targetLength * 0.9,
+        truncatedLength: truncatedText.length,
+        estimatedTokens: this.estimateTokens(truncatedText)
+      });
+      
+      userPrompt = `다음 회의 내용을 정리해주세요 (긴 내용으로 인해 일부만 표시):\n\n${truncatedText}\n\n[회의가 계속되었지만 토큰 제한으로 인해 생략되었습니다. 위 내용을 바탕으로 회의록을 작성해주세요.]`;
     }
 
     const systemPrompt = '당신은 회의록 정리 전문가입니다. 주어진 회의 내용을 체계적으로 정리하여 명확하고 유용한 회의록을 작성해주세요. 시간별 구간 정보가 있다면 이를 활용하여 더욱 상세하고 구조화된 회의록을 만들어주세요.';
+
+    // Calculate safe max_tokens for response
+    const inputTokens = this.estimateTokens(systemPrompt + userPrompt);
+    const availableTokens = maxTokens - inputTokens - 100; // 100 token buffer
+    const safeMaxTokens = Math.max(500, Math.min(2000, availableTokens)); // Between 500-2000 tokens
+    
+    console.log('🔍 TOKEN CALCULATION:', {
+      model,
+      maxTokens,
+      inputTokens,
+      availableTokens,
+      safeMaxTokens,
+      inputLength: userPrompt.length
+    });
 
     const requestBody = {
       model,
@@ -67,7 +93,7 @@ export class OpenAiSummarizationProvider implements SummarizationProvider {
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.3,
-      max_tokens: Math.min(4000, maxTokens - this.estimateTokens(systemPrompt + userPrompt) - 100), // Reserve tokens for response
+      max_tokens: safeMaxTokens,
     };
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -116,18 +142,19 @@ export class OpenAiSummarizationProvider implements SummarizationProvider {
   }
 
   private estimateTokens(text: string): number {
-    // Rough estimation: ~4 characters per token for Korean text
-    return Math.ceil(text.length / 3);
+    // Ultra conservative estimation for Korean text: ~2 characters per token
+    // This accounts for mixed Korean/English content, special tokens, and encoding overhead
+    return Math.ceil(text.length / 2);
   }
 
   private getMaxTokensForModel(model: string): number {
-    // Conservative token limits to avoid API errors
+    // Extremely conservative token limits for total context (input + output)
     const modelLimits: Record<string, number> = {
-      'gpt-4': 6000,
-      'gpt-4-turbo': 100000,
-      'gpt-4o': 100000,
-      'gpt-4o-mini': 100000,
-      'gpt-3.5-turbo': 14000,
+      'gpt-4': 6000, // Ultra conservative for GPT-4 (8192 - 2192 buffer)
+      'gpt-4-turbo': 120000,
+      'gpt-4o': 120000,
+      'gpt-4o-mini': 120000,
+      'gpt-3.5-turbo': 15000,
     };
     
     // Find matching model or use conservative default

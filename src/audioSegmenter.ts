@@ -589,54 +589,37 @@ export class AudioSegmenter {
 
     const inputSize = await this.getInputSize(input);
     
-    // If input is small enough, return as single segment
-    if (inputSize <= maxSizeBytes) {
-      console.log(`File size ${(inputSize / 1024 / 1024).toFixed(2)}MB is within limit, no segmentation needed`);
-      return [{
-        bufferOrPath: await this.readInputAsBuffer(input),
-        startSec: 0,
-        endSec: this.estimateAudioDuration(inputSize),
-        sizeBytes: inputSize
-      }];
-    }
-
-    // Estimate audio duration based on file size
+    console.log(`🔍 FALLBACK: Input size ${(inputSize / 1024 / 1024).toFixed(2)}MB, limit ${(maxSizeBytes / 1024 / 1024).toFixed(2)}MB`);
+    
+    // Without FFmpeg, we cannot safely split audio files by byte slicing
+    // Audio files have headers and structure that cannot be arbitrarily divided
+    // Instead, we'll return the whole file as a single segment and let the STT provider handle it
+    
+    console.log('🔍 FALLBACK: Without FFmpeg, returning entire file as single segment');
+    console.log('🔍 FALLBACK: STT provider will need to handle potential size limits');
+    
     const estimatedDurationSec = this.estimateAudioDuration(inputSize);
-    console.log(`Estimated audio duration: ${estimatedDurationSec.toFixed(2)} seconds`);
-
-    // Calculate number of segments needed based on size and duration constraints
-    const segmentsBySize = Math.ceil(inputSize / maxSizeBytes);
-    const segmentsByDuration = Math.ceil(estimatedDurationSec / maxDurationSec);
-    const totalSegments = Math.max(segmentsBySize, segmentsByDuration, Math.ceil(estimatedDurationSec / hardSplitWindowSec));
-
-    console.log(`Creating ${totalSegments} segments (by size: ${segmentsBySize}, by duration: ${segmentsByDuration})`);
-
-    const segments: SegmentResult[] = [];
-    const actualDurationPerSegment = estimatedDurationSec / totalSegments;
-    const actualSizePerSegment = inputSize / totalSegments;
-
-    const inputBuffer = await this.readInputAsBuffer(input);
-
-    for (let i = 0; i < totalSegments; i++) {
-      const startSec = i * actualDurationPerSegment;
-      const endSec = Math.min((i + 1) * actualDurationPerSegment, estimatedDurationSec);
+    
+    try {
+      const buffer = await this.readInputAsBuffer(input);
       
-      // Calculate buffer slice based on proportional size
-      const startByte = Math.floor((i / totalSegments) * inputSize);
-      const endByte = Math.floor(((i + 1) / totalSegments) * inputSize);
-      const segmentBuffer = inputBuffer.slice(startByte, endByte);
-
-      segments.push({
-        bufferOrPath: segmentBuffer,
-        startSec,
-        endSec,
-        sizeBytes: segmentBuffer.length
-      });
-
-      console.log(`Fallback segment ${i + 1}: ${startSec.toFixed(2)}s-${endSec.toFixed(2)}s, ${(segmentBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+      console.log(`🔍 FALLBACK: Successfully created buffer of ${buffer.byteLength} bytes`);
+      
+      const segment: SegmentResult = {
+        bufferOrPath: buffer,
+        startSec: 0,
+        endSec: estimatedDurationSec,
+        sizeBytes: inputSize
+      };
+      
+      console.log(`🔍 FALLBACK: Returning 1 segment covering ${estimatedDurationSec.toFixed(1)}s`);
+      
+      return [segment];
+      
+    } catch (error) {
+      console.error('🚨 FALLBACK: Failed to read input as buffer:', error);
+      throw new Error(`Failed to process audio file in fallback mode: ${error.message}`);
     }
-
-    return segments;
   }
 
   private async getInputSize(input: File | Buffer | string): Promise<number> {

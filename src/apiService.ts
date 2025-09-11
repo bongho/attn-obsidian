@@ -181,13 +181,27 @@ export class ApiService {
         performanceMetrics: this.performanceMetrics
       });
 
-      // Step 2: Summarize the complete transcription result
+      // Step 2: Summarize the complete transcription result (allow fallback to raw text)
       const summaryStartTime = Date.now();
-      const summary = await this.summarizeWithSegments(verboseResult, systemPrompt);
-      this.performanceMetrics.summarizationTime = Date.now() - summaryStartTime;
+      let summary: string;
       
-      if (!summary || summary.trim() === '') {
-        throw new Error('요약 결과가 비어있습니다.');
+      try {
+        summary = await this.summarizeWithSegments(verboseResult, systemPrompt);
+        this.performanceMetrics.summarizationTime = Date.now() - summaryStartTime;
+        
+        if (!summary || summary.trim() === '') {
+          throw new Error('요약 결과가 비어있습니다.');
+        }
+      } catch (summaryError) {
+        console.warn('⚠️ 요약 생성에 실패했지만 STT 원문을 제공합니다:', summaryError.message);
+        
+        // Provide structured transcription as fallback summary
+        const structuredTranscript = this.formatTranscriptWithTimestamps(verboseResult);
+        
+        summary = `# 음성 인식 원문 (요약 실패)\n\n**⚠️ 토큰 제한으로 인해 요약을 생성하지 못했습니다. 아래는 시간대별 음성 인식 원문입니다.**\n\n${structuredTranscript}\n\n---\n\n**📊 파일 정보**\n- 🎵 음성 길이: ${Math.round((verboseResult.duration || 0) / 60)}분 ${Math.round((verboseResult.duration || 0) % 60)}초\n- 📝 세그먼트 수: ${verboseResult.segments?.length || 0}개\n- 📁 총 텍스트 길이: ${verboseResult.text.length.toLocaleString()}자\n\n**❌ 오류 원인:** ${summaryError.message.includes('token') ? '토큰 제한 초과 (텍스트가 너무 길어 요약 불가)' : summaryError.message}`;
+        
+        this.performanceMetrics.summarizationTime = Date.now() - summaryStartTime;
+        console.log('📝 STT 원문으로 대체된 결과를 제공합니다.');
       }
 
       // Final metrics
@@ -359,22 +373,49 @@ export class ApiService {
       enableChunking: this.settings.processing?.enableChunking
     });
     
-    const { AudioProcessor } = await import('./audioProcessor');
-    const audioProcessor = new AudioProcessor();
-    
-    console.log('🔍 CHUNKING WORKFLOW: AudioProcessor created, calling transcribeWithChunking...');
+    try {
+      const { AudioProcessor } = await import('./audioProcessor');
+      const audioProcessor = new AudioProcessor();
+      
+      console.log('🔍 CHUNKING WORKFLOW: AudioProcessor created, calling transcribeWithChunking...');
+      console.log('🔍 CHUNKING WORKFLOW: Settings passed to AudioProcessor:', {
+        sttProvider: this.settings.stt?.provider,
+        sttModel: this.settings.stt?.model,
+        hasApiKey: !!this.settings.stt?.apiKey,
+        chunkingEnabled: this.settings.processing?.enableChunking,
+        maxUploadSizeMB: this.settings.processing?.maxUploadSizeMB
+      });
 
-    // Step 1: Transcribe all chunks (STT only, no summarization)
-    const chunkTranscriptionResult = await audioProcessor.transcribeWithChunking(audioFile, this.settings);
-    
-    console.log('🔍 CHUNKING WORKFLOW: transcribeWithChunking completed', {
-      hasText: !!chunkTranscriptionResult.text,
-      textLength: chunkTranscriptionResult.text?.length || 0,
-      segmentCount: chunkTranscriptionResult.segments?.length || 0,
-      previewText: chunkTranscriptionResult.text?.substring(0, 100) || 'No text'
-    });
+      // Step 1: Transcribe all chunks (STT only, no summarization)
+      const chunkTranscriptionResult = await audioProcessor.transcribeWithChunking(audioFile, this.settings);
+      
+      console.log('🔍 CHUNKING WORKFLOW: transcribeWithChunking completed', {
+        hasText: !!chunkTranscriptionResult.text,
+        textLength: chunkTranscriptionResult.text?.length || 0,
+        segmentCount: chunkTranscriptionResult.segments?.length || 0,
+        previewText: chunkTranscriptionResult.text?.substring(0, 100) || 'No text',
+        hasSegments: !!chunkTranscriptionResult.segments,
+        segmentDetails: chunkTranscriptionResult.segments?.slice(0, 3).map(seg => ({
+          start: seg.start,
+          end: seg.end,
+          textLength: seg.text?.length || 0,
+          hasText: !!seg.text
+        })) || 'No segments'
+      });
 
-    return chunkTranscriptionResult;
+      // If we got empty results, let's investigate why
+      if (!chunkTranscriptionResult.text && (!chunkTranscriptionResult.segments || chunkTranscriptionResult.segments.length === 0)) {
+        console.error('🚨 CHUNKING WORKFLOW FAILED: Empty result from transcribeWithChunking');
+        console.error('🚨 This suggests the chunking process itself failed');
+        console.error('🚨 Check audioProcessor.transcribeWithChunking implementation');
+      }
+
+      return chunkTranscriptionResult;
+    } catch (error) {
+      console.error('🚨 CHUNKING WORKFLOW ERROR:', error);
+      console.error('🚨 Error occurred in processWithChunking:', error.stack);
+      throw error;
+    }
   }
 
   private async transcribeAudioVerbose(audioFile: File): Promise<VerboseTranscriptionResult> {
@@ -391,7 +432,19 @@ export class ApiService {
       }
 
       const sttProvider = createSttProvider(effectiveSttSettings);
+      
+      console.log('🔍 DIRECT STT: About to read arrayBuffer from audioFile:', {
+        fileName: audioFile.name,
+        fileSize: audioFile.size,
+        fileType: audioFile.type
+      });
+      
       const audioBuffer = await audioFile.arrayBuffer();
+      
+      console.log('🔍 DIRECT STT: ArrayBuffer read successfully:', {
+        bufferSize: audioBuffer.byteLength,
+        sizeMatchesFile: audioBuffer.byteLength === audioFile.size
+      });
       
       const result = await sttProvider.transcribe(audioBuffer, {
         format: 'verbose_json',
@@ -670,5 +723,78 @@ ${speakerInfo}
     // Find the last segment's end time
     const lastSegment = verboseResult.segments[verboseResult.segments.length - 1];
     return lastSegment.end || 0;
+  }
+
+  private formatTranscriptWithTimestamps(verboseResult: VerboseTranscriptionResult): string {
+    if (!verboseResult.segments || verboseResult.segments.length === 0) {
+      return verboseResult.text || '음성 인식 결과가 없습니다.';
+    }
+
+    const segments = verboseResult.segments;
+    const lines: string[] = [];
+    
+    // Group consecutive segments that are likely from the same speaker
+    let currentGroup: string[] = [];
+    let currentStartTime = 0;
+    let currentEndTime = 0;
+    
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const nextSegment = segments[i + 1];
+      
+      // Initialize group if it's empty
+      if (currentGroup.length === 0) {
+        currentStartTime = segment.start;
+        currentGroup.push(segment.text.trim());
+        currentEndTime = segment.end;
+        continue;
+      }
+      
+      // Check if this segment should be grouped with the previous ones
+      const timeDifference = segment.start - currentEndTime;
+      const shouldGroup = timeDifference < 2.0; // Group segments within 2 seconds
+      
+      if (shouldGroup && currentGroup.length < 5) { // Limit group size
+        currentGroup.push(segment.text.trim());
+        currentEndTime = segment.end;
+      } else {
+        // Finalize current group and start new one
+        const groupText = currentGroup.join(' ').trim();
+        if (groupText) {
+          const timeRange = currentStartTime === currentEndTime 
+            ? this.formatTime(currentStartTime)
+            : `${this.formatTime(currentStartTime)}-${this.formatTime(currentEndTime)}`;
+          lines.push(`**[${timeRange}]**`);
+          lines.push(`${groupText}\n`);
+        }
+        
+        // Start new group
+        currentGroup = [segment.text.trim()];
+        currentStartTime = segment.start;
+        currentEndTime = segment.end;
+      }
+    }
+    
+    // Don't forget the last group
+    if (currentGroup.length > 0) {
+      const groupText = currentGroup.join(' ').trim();
+      if (groupText) {
+        const timeRange = currentStartTime === currentEndTime 
+          ? this.formatTime(currentStartTime)
+          : `${this.formatTime(currentStartTime)}-${this.formatTime(currentEndTime)}`;
+        lines.push(`**[${timeRange}]**`);
+        lines.push(`${groupText}\n`);
+      }
+    }
+    
+    // Add summary statistics at the beginning
+    const totalDuration = verboseResult.duration || this.estimateAudioDuration(verboseResult);
+    const header = `## 📝 음성 인식 원문\n\n` +
+                  `**⏱️ 총 시간:** ${Math.floor(totalDuration / 60)}분 ${Math.floor(totalDuration % 60)}초  ` +
+                  `**🎙️ 세그먼트:** ${segments.length}개  ` +
+                  `**📄 텍스트 길이:** ${verboseResult.text.length.toLocaleString()}자\n\n` +
+                  `---\n\n`;
+    
+    return header + lines.join('\n');
   }
 }
