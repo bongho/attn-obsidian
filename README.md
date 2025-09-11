@@ -5,6 +5,8 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Obsidian](https://img.shields.io/badge/Obsidian-483699?style=flat&logo=obsidian&logoColor=white)](https://obsidian.md/)
 
+**📖 Language / 언어**: [English](README-en.md) | [한국어](README.md) | **📋 Documentation**: [PRD (English)](prd.md) | [PRD (한국어)](prd-ko.md)
+
 > 🚀 **TDD로 구축된 고품질 Obsidian 플러그인**  
 > M4A 오디오 파일을 OpenAI Whisper & GPT를 통해 체계적인 회의록으로 자동 변환
 
