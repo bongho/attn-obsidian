@@ -116,27 +116,44 @@ export class ApiService {
       }
       
       if (!verboseResult.text || verboseResult.text.trim() === '') {
-        console.error('Empty transcription result:', {
+        console.error('🚨 FINAL RESULT DEBUG: Empty transcription result');
+        console.error('Result details:', {
           hasText: !!verboseResult.text,
           textLength: verboseResult.text?.length || 0,
           segmentCount: verboseResult.segments?.length || 0,
           firstSegment: verboseResult.segments?.[0]?.text?.substring(0, 100) || 'N/A',
           audioFileSize: audioFile.size,
           audioFileName: audioFile.name,
-          processingMode: audioFile.size > maxSizeBytes ? 'chunked' : 'direct'
+          processingMode: audioFile.size > maxSizeBytes ? 'chunked' : 'direct',
+          duration: verboseResult.duration,
+          language: verboseResult.language
         });
         
-        // Try to recover from segments if main text is empty
+        // Advanced recovery attempt
         if (verboseResult.segments && verboseResult.segments.length > 0) {
-          const recoveredText = verboseResult.segments.map(seg => seg.text).join(' ').trim();
-          if (recoveredText) {
-            console.log('🚑 Recovered text from segments:', recoveredText.substring(0, 200) + '...');
-            verboseResult.text = recoveredText;
+          console.log('🔍 Attempting advanced text recovery from segments...');
+          
+          const nonEmptySegments = verboseResult.segments.filter(seg => seg.text && seg.text.trim());
+          console.log(`Found ${nonEmptySegments.length}/${verboseResult.segments.length} non-empty segments`);
+          
+          if (nonEmptySegments.length > 0) {
+            const recoveredText = nonEmptySegments.map(seg => seg.text.trim()).join(' ').trim();
+            if (recoveredText) {
+              console.log('🚑 Successfully recovered text from segments:', recoveredText.substring(0, 200) + '...');
+              verboseResult.text = recoveredText;
+            } else {
+              console.error('🚨 All segments are empty after filtering');
+              this.logSegmentDetails(verboseResult.segments);
+              throw new Error(`음성 인식 결과가 비어있습니다. 파일: ${audioFile.name} (${(audioFile.size/1024/1024).toFixed(2)}MB)\n\n가능한 원인:\n- 오디오 파일이 손상되었을 수 있습니다\n- 음성이 너무 작거나 노이즈가 많을 수 있습니다\n- 3배속 처리로 인해 음성이 자연스럽지 않을 수 있습니다`);
+            }
           } else {
-            throw new Error('음성 인식 결과가 비어있습니다. 오디오 파일에 음성이 포함되어 있는지 확인해주세요.');
+            console.error('🚨 No valid segments found for recovery');
+            this.logSegmentDetails(verboseResult.segments);
+            throw new Error(`음성 인식에 실패했습니다. ${verboseResult.segments.length}개의 구간으로 나눠졌으나 모두 비어있습니다.\n\n해결 방안:\n1. 원본 오디오 파일을 확인해주세요\n2. 1배속으로 다시 시도해주세요\n3. 다른 오디오 파일로 테스트해주세요`);
           }
         } else {
-          throw new Error('음성 인식 결과가 비어있습니다. 오디오 파일에 음성이 포함되어 있는지 확인해주세요.');
+          console.error('🚨 No segments found in transcription result');
+          throw new Error(`음성 인식에 실패했습니다. 세그먼트가 생성되지 않았습니다.\n\n해결 방안:\n1. 오디오 파일이 손상되지 않았는지 확인\n2. 오디오 형식이 지원되는지 확인 (M4A, MP3, WAV 권장)\n3. 파일 크기가 너무 큰지 확인`);
         }
       }
 
@@ -241,6 +258,16 @@ export class ApiService {
   private estimateFileDuration(sizeBytes: number): number {
     // Rough estimate: ~1MB per minute for compressed audio
     return (sizeBytes / (1024 * 1024)) * 60;
+  }
+
+  private logSegmentDetails(segments: any[]): void {
+    console.error('Segment details:');
+    segments.slice(0, 10).forEach((seg, index) => { // Show first 10 segments
+      console.error(`  Segment ${index}: "${seg.text || 'EMPTY'}" (${seg.start}-${seg.end}s)`);
+    });
+    if (segments.length > 10) {
+      console.error(`  ... and ${segments.length - 10} more segments`);
+    }
   }
 
   private validateAudioFile(audioFile: File): { isValid: boolean; error?: string } {

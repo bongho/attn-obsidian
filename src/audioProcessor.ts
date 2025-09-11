@@ -284,11 +284,24 @@ export class AudioProcessor {
         message: `Segmented audio into ${segments.length} chunks`,
         chunkCount: segments.length
       });
+      
+      // Debug segment details
+      console.log(`🔍 Segmentation details:`);
+      segments.forEach((seg, index) => {
+        const duration = seg.endSec - seg.startSec;
+        console.log(`  Segment ${index}: ${seg.startSec.toFixed(1)}s-${seg.endSec.toFixed(1)}s (${duration.toFixed(1)}s), ${(seg.sizeBytes / 1024).toFixed(1)}KB`);
+      });
 
       // Process segments with batch parallel processing
+      console.log(`🔍 About to process ${segments.length} segments with batch processing`);
       const chunkResults: VerboseTranscriptionResult[] = await this.processSegmentsBatch(
         segments, audioFile, settings, logContext, logger
       );
+      
+      console.log(`🔍 Batch processing completed. Got ${chunkResults.length} results`);
+      chunkResults.forEach((result, index) => {
+        console.log(`  Result ${index}: text=${result.text?.length || 0}chars, segments=${result.segments?.length || 0}`);
+      });
 
       // Merge results with timeline correction
       let mergedResult = this.mergeVerboseResults(chunkResults, segments);
@@ -393,14 +406,29 @@ export class AudioProcessor {
     }
 
     console.log(`Merge result: ${combinedText.length} chars, ${combinedSegments.length} segments`);
+    
+    // Debug empty result
+    if (!combinedText || combinedText.trim() === '') {
+      console.error('🚨 MERGE DEBUG: All chunks resulted in empty text!');
+      console.error('🚨 Chunk details:');
+      chunkResults.forEach((chunk, index) => {
+        console.error(`  Chunk ${index}: hasText=${!!chunk.text}, length=${chunk.text?.length || 0}, segments=${chunk.segments?.length || 0}`);
+        if (chunk.segments && chunk.segments.length > 0) {
+          console.error(`    First segment: "${chunk.segments[0].text?.substring(0, 50) || 'empty'}"`);
+        }
+      });
+    }
 
-    return {
+    const result = {
       text: combinedText,
       language: chunkResults[0]?.language,
       duration: segments[segments.length - 1]?.endSec || 0,
       segments: combinedSegments,
       raw: { chunks: rawChunks }
     };
+    
+    console.log(`🔍 Final merge result: text=${result.text.length}chars, segments=${result.segments.length}, duration=${result.duration}s`);
+    return result;
   }
 
   private validateSegmentTimeline(segments: SegmentResult[]): void {
@@ -415,13 +443,37 @@ export class AudioProcessor {
   }
 
   private async segmentToFile(segment: SegmentResult, filename: string): Promise<File> {
-    if (Buffer.isBuffer(segment.bufferOrPath)) {
-      return new File([segment.bufferOrPath], filename, { type: 'audio/m4a' });
-    } else {
-      // For file path, read the file - this is a stub implementation
-      const fs = require('fs');
-      const buffer = fs.readFileSync(segment.bufferOrPath);
+    try {
+      let buffer: Buffer;
+      let actualSize: number;
+      
+      if (Buffer.isBuffer(segment.bufferOrPath)) {
+        buffer = segment.bufferOrPath;
+        actualSize = buffer.length;
+      } else {
+        // For file path, read the file
+        const fs = require('fs');
+        buffer = fs.readFileSync(segment.bufferOrPath);
+        actualSize = buffer.length;
+      }
+      
+      console.log(`🔍 Creating segment file: ${filename}`);
+      console.log(`  Expected size: ${(segment.sizeBytes / 1024).toFixed(1)}KB, Actual size: ${(actualSize / 1024).toFixed(1)}KB`);
+      console.log(`  Duration: ${(segment.endSec - segment.startSec).toFixed(1)}s`);
+      
+      // Validate segment has content
+      if (actualSize === 0) {
+        throw new Error(`Segment file is empty: ${filename}`);
+      }
+      
+      if (actualSize < 1000) {
+        console.warn(`🚨 Very small segment: ${filename} (${actualSize} bytes) - may not contain audio`);
+      }
+      
       return new File([buffer], filename, { type: 'audio/m4a' });
+    } catch (error) {
+      console.error(`🚨 Failed to create segment file ${filename}:`, error);
+      throw error;
     }
   }
 
@@ -550,24 +602,34 @@ export class AudioProcessor {
           
           // Validate transcription result
           if (!result.text || result.text.trim() === '') {
-            console.warn(`Empty transcription for chunk ${globalIndex + 1}, checking segments...`);
+            console.warn(`🔍 CHUNK ${globalIndex + 1}: Empty transcription detected`);
+            console.warn(`  Duration: ${(segment.endSec - segment.startSec).toFixed(1)}s`);
+            console.warn(`  Size: ${(segment.sizeBytes / 1024).toFixed(1)}KB`);
+            console.warn(`  Segments count: ${result.segments?.length || 0}`);
             
             // Try to recover from segments
             if (result.segments && result.segments.length > 0) {
-              const recoveredText = result.segments.map(seg => seg.text).join(' ').trim();
+              const recoveredText = result.segments.map(seg => seg.text || '').filter(t => t.trim()).join(' ').trim();
               if (recoveredText) {
                 result.text = recoveredText;
-                console.log(`Recovered text from segments for chunk ${globalIndex + 1}: ${recoveredText.substring(0, 100)}...`);
+                console.log(`🚑 CHUNK ${globalIndex + 1}: Recovered ${recoveredText.length} chars from segments: "${recoveredText.substring(0, 100)}..."`);
+              } else {
+                console.warn(`🚑 CHUNK ${globalIndex + 1}: Segments exist but all are empty`);
+                result.segments.forEach((seg, segIndex) => {
+                  console.warn(`    Segment ${segIndex}: "${seg.text}" (${seg.start}-${seg.end}s)`);
+                });
               }
             }
             
             // Still empty after recovery attempt
             if (!result.text || result.text.trim() === '') {
-              console.warn(`Chunk ${globalIndex + 1} has no transcribable content (${segment.endSec - segment.startSec}s duration)`);
+              console.warn(`🚨 CHUNK ${globalIndex + 1}: No recoverable content found - this chunk may be silent or corrupted`);
               // Create minimal result to avoid breaking the pipeline
               result.text = '';
               result.segments = [];
             }
+          } else {
+            console.log(`✓ CHUNK ${globalIndex + 1}: Successfully transcribed ${result.text.length} characters`);
           }
           
           await logger.log('info', {
