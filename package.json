@@ -11,7 +11,8 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "setup": "node scripts/setup-config.js",
-    "setup:config": "node scripts/setup-config.js"
+    "setup:config": "node scripts/setup-config.js",
+    "version": "node scripts/version-bump.mjs && git add manifest.json versions.json"
   },
   "keywords": [
     "obsidian",

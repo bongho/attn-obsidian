@@ -1,0 +1,67 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Use Node.js 20.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build plugin
+      run: npm run build
+
+    - name: Create release package
+      run: |
+        mkdir release
+        cp main.js manifest.json release/
+        if [ -f styles.css ]; then cp styles.css release/; fi
+        cd release
+        zip -r ../attn-obsidian-${{ github.ref_name }}.zip .
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          attn-obsidian-${{ github.ref_name }}.zip
+          main.js
+          manifest.json
+          styles.css
+        draft: false
+        prerelease: false
+        body: |
+          ## Installation
+
+          1. Download `manifest.json`, `main.js`, and `styles.css` (if available)
+          2. Create folder: `[Your Vault]/.obsidian/plugins/audio-to-tidied-notes/`
+          3. Place the downloaded files in this folder
+          4. Reload Obsidian and enable the plugin in Settings → Community Plugins
+
+          ## Changes
+
+          See [CHANGELOG.md](https://github.com/bongho/attn-obsidian/blob/main/CHANGELOG.md) for details.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: plugin-files
+        path: |
+          main.js
+          manifest.json
+          styles.css
