@@ -3,10 +3,12 @@ import { SpeechToTextProvider, SttSettings, VerboseTranscriptionResult } from '.
 export class OpenAiSttProvider implements SpeechToTextProvider {
   private settings: SttSettings;
   private baseUrl: string;
+  private timeout: number;
 
-  constructor(settings: SttSettings) {
+  constructor(settings: SttSettings, timeoutMs?: number) {
     this.settings = settings;
     this.baseUrl = settings.baseUrl || 'https://api.openai.com/v1';
+    this.timeout = timeoutMs || 120000; // Default 2 minutes
   }
 
   async transcribe(
@@ -30,20 +32,44 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
       formData.append('language', options.language || this.settings.language!);
     }
 
-    const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: formData
-    });
+    // Create AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: formData,
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      return await this.handleResponse(response, options);
+    } catch (error) {
+      clearTimeout(timeoutId);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`OpenAI STT API request timed out after ${this.timeout}ms`);
+      }
+      throw error;
+    }
+  }
+
+  private async handleResponse(
+    response: Response,
+    options: { format: 'verbose_json' | 'text'; language?: string; model?: string }
+  ): Promise<VerboseTranscriptionResult> {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       const errorMessage = errorData.error?.message || response.statusText;
       const errorCode = errorData.error?.code || response.status;
       const errorType = errorData.error?.type || 'api_error';
-      
+
       console.error('OpenAI STT API Error:', {
         status: response.status,
         message: errorMessage,
@@ -51,7 +77,7 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
         type: errorType,
         model: options.model || this.settings.model
       });
-      
+
       throw new Error(`OpenAI STT API error (${response.status}): ${errorMessage}`);
     }
 
@@ -65,7 +91,7 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
         segmentCount: result.segments?.length || 0
       });
     }
-    
+
     // Ensure the response has the verbose_json structure
     if (options.format === 'verbose_json' && result.segments) {
       // Try to recover text from segments if main text is empty
@@ -74,7 +100,7 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
         finalText = result.segments.map((seg: any) => seg.text).join(' ').trim();
         console.log('Recovered text from segments:', finalText.substring(0, 200));
       }
-      
+
       return {
         text: finalText,
         language: result.language,

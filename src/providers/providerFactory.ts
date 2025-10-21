@@ -6,12 +6,12 @@ import { GeminiSummarizationProvider } from './GeminiSummarizationProvider';
 import { LocalWhisperProvider } from './LocalWhisperProvider';
 import { LocalLlmProvider } from './LocalLlmProvider';
 
-export function createSttProvider(settings: SttSettings): SpeechToTextProvider {
+export function createSttProvider(settings: SttSettings, timeoutMs?: number): SpeechToTextProvider {
   switch (settings.provider) {
     case 'openai':
-      return new OpenAiSttProvider(settings);
+      return new OpenAiSttProvider(settings, timeoutMs);
     case 'gemini':
-      return new GeminiSttProvider(settings);
+      return new GeminiSttProvider(settings, timeoutMs);
     case 'local-whisper':
       return new LocalWhisperProvider(settings);
     default:
@@ -19,12 +19,12 @@ export function createSttProvider(settings: SttSettings): SpeechToTextProvider {
   }
 }
 
-export function createSummarizationProvider(settings: SummarySettings): SummarizationProvider {
+export function createSummarizationProvider(settings: SummarySettings, timeoutMs?: number): SummarizationProvider {
   switch (settings.provider) {
     case 'openai':
-      return new OpenAiSummarizationProvider(settings);
+      return new OpenAiSummarizationProvider(settings, timeoutMs);
     case 'gemini':
-      return new GeminiSummarizationProvider(settings);
+      return new GeminiSummarizationProvider(settings, timeoutMs);
     case 'local-llm':
       return new LocalLlmProvider(settings);
     default:

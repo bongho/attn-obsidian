@@ -193,11 +193,29 @@
 ### TDD 방법론으로 구축된 고품질 코드베이스
 
 ```bash
-✅ 80개 총 테스트 (73개 통과, 91.25% 성공률)
+✅ Jest 기반 종합 테스트 스위트 구축
 ✅ TypeScript 기반 type-safe 구현
 ✅ ESLint + Prettier 코드 품질 관리
-✅ Jest 기반 종합 테스트 커버리지
+✅ GitHub Actions CI/CD 자동화
 ✅ 모듈식 아키텍처 (확장성 & 유지보수성)
+```
+
+**테스트 실행 방법:**
+```bash
+# 의존성 설치 (최초 1회)
+npm install
+
+# 테스트 실행
+npm test
+
+# 커버리지 포함 테스트
+npm test -- --coverage
+
+# 타입 체크
+npm run typecheck
+
+# 린트 검사
+npm run lint
 ```
 
 ### 개발 환경 설정
@@ -213,10 +231,25 @@ npm install
 # 개발 모드 실행 (Hot reload)
 npm run dev
 
-# 테스트 실행
+# 프로덕션 빌드
+npm run build
+```
+
+**⚠️ npm 설치 시 권한 오류가 발생하는 경우:**
+```bash
+# macOS/Linux
+sudo chown -R $USER:$(id -gn $USER) ~/.npm
+
+# 또는 강제 설치
+npm install --force
+```
+
+**품질 검증:**
+```bash
+# 전체 테스트 실행
 npm test
 
-# 테스트 커버리지 확인
+# 커버리지 포함
 npm test -- --coverage
 
 # 타입 체크
@@ -224,9 +257,6 @@ npm run typecheck
 
 # 린트 검사
 npm run lint
-
-# 프로덕션 빌드
-npm run build
 ```
 
 ### 프로젝트 구조

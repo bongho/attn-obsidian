@@ -151,6 +151,7 @@ export interface ProcessingSettings {
   hardSplitWindowSec?: number;
   preserveIntermediates?: boolean;
   contextOverlapSec?: number; // New: Context overlap for better continuity
+  apiTimeoutMs?: number; // API request timeout in milliseconds
   diarization?: DiarizationSettings;
 }
 

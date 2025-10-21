@@ -1,14 +1,22 @@
 import { ConfigLoader } from './configLoader';
-import { createSttProvider, createSummarizationProvider } from './providers/providerFactory';
-import { 
-  ATTNSettings, 
-  VerboseTranscriptionResult, 
-  PerformanceMetrics, 
-  ProcessingProgress, 
+import { createSttProvider } from './providers/providerFactory';
+import { ErrorSanitizer } from './utils/errorSanitizer';
+import { AudioValidator } from './utils/audioValidator';
+import { TranscriptFormatter } from './services/transcriptFormatter';
+import { SummarizationService } from './services/summarizationService';
+import {
+  ATTNSettings,
+  VerboseTranscriptionResult,
+  PerformanceMetrics,
+  ProcessingProgress,
   ProgressCallback,
   StreamingCallback,
   StreamingResult
 } from './types';
+import {
+  FILE_SIZE_LIMITS,
+  estimateFileDuration
+} from './constants';
 
 export interface ProcessAudioResult {
   transcript: string;
@@ -17,13 +25,6 @@ export interface ProcessAudioResult {
   performanceMetrics?: PerformanceMetrics;
   processingTimeMs: number;
 }
-
-// Constants for file size limits
-const FILE_SIZE_LIMITS = {
-  OPENAI_API_LIMIT_MB: 25, // Official OpenAI API limit
-  FORMDATA_OVERHEAD_FACTOR: 1.15, // ~15% overhead for FormData encoding
-  CONSERVATIVE_LIMIT_MB: 23, // Conservative limit to prevent 413 errors
-} as const;
 
 export class ApiService {
   private config: ConfigLoader;
@@ -75,9 +76,14 @@ export class ApiService {
     
     try {
       // Validate audio file before processing
-      const validationResult = this.validateAudioFile(audioFile);
+      const validationResult = AudioValidator.validate(audioFile);
       if (!validationResult.isValid) {
         throw new Error(`오디오 파일 검증 실패: ${validationResult.error}`);
+      }
+
+      // Log warnings if any
+      if (validationResult.warnings && validationResult.warnings.length > 0) {
+        validationResult.warnings.forEach(warning => console.warn(warning));
       }
 
       // Emit initial progress
@@ -91,7 +97,7 @@ export class ApiService {
 
       // Determine processing strategy based on file size
       const fileSizeAnalysis = this.analyzeFileSize(audioFile);
-      const estimatedDuration = this.estimateFileDuration(audioFile.size);
+      const estimatedDuration = estimateFileDuration(audioFile.size);
       
       console.log(`Processing audio: ${audioFile.name}, size: ${fileSizeAnalysis.sizeMB}MB, estimated: ${Math.round(estimatedDuration / 60)}min`);
       console.log(`🔍 Processing strategy: ${fileSizeAnalysis.shouldUseChunking ? 'CHUNKING' : 'DIRECT'} (${fileSizeAnalysis.reason})`);
@@ -184,9 +190,10 @@ export class ApiService {
       // Step 2: Summarize the complete transcription result (allow fallback to raw text)
       const summaryStartTime = Date.now();
       let summary: string;
-      
+
       try {
-        summary = await this.summarizeWithSegments(verboseResult, systemPrompt);
+        const summarizationService = new SummarizationService(this.settings);
+        summary = await summarizationService.summarize(verboseResult, systemPrompt);
         this.performanceMetrics.summarizationTime = Date.now() - summaryStartTime;
         
         if (!summary || summary.trim() === '') {
@@ -194,9 +201,9 @@ export class ApiService {
         }
       } catch (summaryError) {
         console.warn('⚠️ 요약 생성에 실패했지만 STT 원문을 제공합니다:', summaryError.message);
-        
+
         // Provide structured transcription as fallback summary
-        const structuredTranscript = this.formatTranscriptWithTimestamps(verboseResult);
+        const structuredTranscript = TranscriptFormatter.formatWithTimestamps(verboseResult);
         
         summary = `# 음성 인식 원문 (요약 실패)\n\n**⚠️ 토큰 제한으로 인해 요약을 생성하지 못했습니다. 아래는 시간대별 음성 인식 원문입니다.**\n\n${structuredTranscript}\n\n---\n\n**📊 파일 정보**\n- 🎵 음성 길이: ${Math.round((verboseResult.duration || 0) / 60)}분 ${Math.round((verboseResult.duration || 0) % 60)}초\n- 📝 세그먼트 수: ${verboseResult.segments?.length || 0}개\n- 📁 총 텍스트 길이: ${verboseResult.text.length.toLocaleString()}자\n\n**❌ 오류 원인:** ${summaryError.message.includes('token') ? '토큰 제한 초과 (텍스트가 너무 길어 요약 불가)' : summaryError.message}`;
         
@@ -315,11 +322,6 @@ export class ApiService {
     };
   }
 
-  private estimateFileDuration(sizeBytes: number): number {
-    // Rough estimate: ~1MB per minute for compressed audio
-    return (sizeBytes / (1024 * 1024)) * 60;
-  }
-
   private logSegmentDetails(segments: any[]): void {
     console.error('Segment details:');
     segments.slice(0, 10).forEach((seg, index) => { // Show first 10 segments
@@ -328,37 +330,6 @@ export class ApiService {
     if (segments.length > 10) {
       console.error(`  ... and ${segments.length - 10} more segments`);
     }
-  }
-
-  private validateAudioFile(audioFile: File): { isValid: boolean; error?: string } {
-    // Check file size
-    if (audioFile.size === 0) {
-      return { isValid: false, error: '오디오 파일이 비어있습니다.' };
-    }
-    
-    if (audioFile.size < 1000) { // Less than 1KB
-      return { isValid: false, error: '오디오 파일이 너무 작습니다. 유효한 오디오 콘텐츠가 있는지 확인해주세요.' };
-    }
-    
-    if (audioFile.size > 100 * 1024 * 1024) { // Over 100MB
-      console.warn(`Large audio file: ${(audioFile.size / 1024 / 1024).toFixed(2)}MB`);
-    }
-    
-    // Check file extension
-    const validExtensions = ['.m4a', '.mp3', '.wav', '.flac', '.aac', '.ogg', '.webm', '.mp4'];
-    const fileExtension = audioFile.name.toLowerCase().substring(audioFile.name.lastIndexOf('.'));
-    
-    if (!validExtensions.includes(fileExtension)) {
-      console.warn(`Unsupported file extension: ${fileExtension}. Supported: ${validExtensions.join(', ')}`);
-      // Don't fail, just warn - OpenAI might support it
-    }
-    
-    // Check MIME type if available
-    if (audioFile.type && !audioFile.type.startsWith('audio/') && !audioFile.type.startsWith('video/')) {
-      console.warn(`Unexpected MIME type: ${audioFile.type}`);
-    }
-    
-    return { isValid: true };
   }
 
   async transcribeAudio(audioFile: File, options: { format: 'verbose_json' }): Promise<VerboseTranscriptionResult> {
@@ -431,7 +402,9 @@ export class ApiService {
         throw new Error('STT API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
       }
 
-      const sttProvider = createSttProvider(effectiveSttSettings);
+      // Get timeout from settings
+      const timeout = this.settings.processing?.apiTimeoutMs;
+      const sttProvider = createSttProvider(effectiveSttSettings, timeout);
       
       console.log('🔍 DIRECT STT: About to read arrayBuffer from audioFile:', {
         fileName: audioFile.name,
@@ -466,335 +439,13 @@ export class ApiService {
     }
   }
 
-  private async summarizeWithSegments(verboseResult: VerboseTranscriptionResult, customSystemPrompt?: string): Promise<string> {
-    try {
-      const estimatedDuration = verboseResult.duration || this.estimateAudioDuration(verboseResult);
-      const isUltraLong = estimatedDuration > 3600; // Over 1 hour
-      
-      if (isUltraLong && verboseResult.segments.length > 50) {
-        // Use hierarchical summarization for ultra-long meetings
-        if (this.config.isDebugMode()) {
-          console.log(`🔧 ATTN Debug: Using hierarchical summarization for ${Math.round(estimatedDuration / 60)}-minute meeting`);
-        }
-        
-        return await this.hierarchicalSummarization(verboseResult, customSystemPrompt);
-      } else {
-        // Use standard summarization for shorter meetings
-        return await this.standardSummarization(verboseResult, customSystemPrompt);
-      }
-    } catch (error) {
-      if (error instanceof Error) {
-        // Enhanced error reporting for better debugging
-      const errorMessage = (error as any).response?.data?.error?.message || (error as Error).message;
-      const errorCode = (error as any).response?.status || 'unknown';
-      const errorType = (error as any).response?.data?.error?.type || 'unknown';
-      
-      console.error('Summarization error details:', {
-        message: errorMessage,
-        code: errorCode,
-        type: errorType,
-        provider: this.settings.summary.provider,
-        model: this.settings.summary.model
-      });
-      
-      throw new Error(`요약 생성 실패 (${errorCode}): ${errorMessage}`);
-      }
-      throw error;
-    }
-  }
-
-  private async standardSummarization(verboseResult: VerboseTranscriptionResult, customSystemPrompt?: string): Promise<string> {
-    // Get effective Summary settings
-    const effectiveSummarySettings = {
-      ...this.settings.summary,
-      apiKey: this.settings.summary.apiKey || this.settings.openaiApiKey || this.config.getOpenAIApiKey() || ''
-    };
-
-    if (!effectiveSummarySettings.apiKey && effectiveSummarySettings.provider === 'openai') {
-      throw new Error('Summary API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
-    }
-
-    const summaryProvider = createSummarizationProvider(effectiveSummarySettings);
-    
-    // Use custom system prompt if provided, otherwise use settings
-    const systemPrompt = customSystemPrompt || this.settings.systemPrompt;
-
-    // Enhanced context information for better meeting summarization
-    const estimatedDuration = verboseResult.duration || this.estimateAudioDuration(verboseResult);
-    const speakerInfo = verboseResult.speakers ? 
-      `참석자: ${verboseResult.speakers.length}명` : 
-      '참석자: 화자 분리 정보 없음';
-    
-    const meetingContext = `
-이것은 약 ${Math.round(estimatedDuration / 60)}분간의 회의 내용입니다.
-${speakerInfo}
-총 ${verboseResult.segments.length}개의 발언 구간으로 구성되어 있습니다.
-
-회의의 전체적인 흐름과 맥락을 고려하여 일관성 있게 요약해주세요.
-`;
-
-    const input = {
-      text: meetingContext + '\n\n' + verboseResult.text,
-      segments: verboseResult.segments,
-      language: verboseResult.language,
-      duration: estimatedDuration,
-      speakers: verboseResult.speakers
-    };
-
-    const result = await summaryProvider.summarize(input, {
-      model: effectiveSummarySettings.model
-    });
-
-    if (this.config.isDebugMode()) {
-      console.log(`🔧 ATTN Debug: Standard summary completed using ${effectiveSummarySettings.provider}/${effectiveSummarySettings.model}`);
-      console.log(`🔧 ATTN Debug: Used ${verboseResult.segments.length} segments for enhanced summarization`);
-    }
-
-    return result;
-  }
-
-  private async hierarchicalSummarization(verboseResult: VerboseTranscriptionResult, customSystemPrompt?: string): Promise<string> {
-    const effectiveSummarySettings = {
-      ...this.settings.summary,
-      apiKey: this.settings.summary.apiKey || this.settings.openaiApiKey || this.config.getOpenAIApiKey() || ''
-    };
-
-    if (!effectiveSummarySettings.apiKey && effectiveSummarySettings.provider === 'openai') {
-      throw new Error('Summary API 키가 설정되지 않았습니다. 플러그인 설정에서 API 키를 입력해주세요.');
-    }
-
-    const summaryProvider = createSummarizationProvider(effectiveSummarySettings);
-    const estimatedDuration = verboseResult.duration || this.estimateAudioDuration(verboseResult);
-    const speakerInfo = verboseResult.speakers ? 
-      `참석자: ${verboseResult.speakers.length}명` : 
-      '참석자: 화자 분리 정보 없음';
-
-    if (this.config.isDebugMode()) {
-      console.log(`🔧 ATTN Debug: Starting hierarchical summarization for ${verboseResult.segments.length} segments`);
-    }
-
-    // Phase 1: Create partial summaries from segment groups
-    const partialSummaries = await this.createPartialSummaries(verboseResult, summaryProvider, effectiveSummarySettings);
-    
-    if (this.config.isDebugMode()) {
-      console.log(`🔧 ATTN Debug: Created ${partialSummaries.length} partial summaries`);
-    }
-
-    // Phase 2: Consolidate partial summaries into final summary
-    const finalSummaryContext = `
-이것은 약 ${Math.round(estimatedDuration / 60)}분간의 회의에서 생성된 ${partialSummaries.length}개의 부분 요약을 통합한 내용입니다.
-${speakerInfo}
-
-각 부분 요약의 내용과 맥락을 종합하여 일관성 있고 포괄적인 최종 회의록을 작성해주세요.
-회의의 전체적인 흐름, 주요 결정사항, 액션 아이템을 명확히 정리해주세요.
-`;
-
-    // Check total length and truncate if necessary to avoid token limits
-    const maxTokens = 12000; // Conservative limit for GPT models
-    const estimatedTokens = (finalSummaryContext.length + partialSummaries.join('\n\n---\n\n').length) / 4;
-    
-    let consolidatedText = finalSummaryContext + '\n\n' + partialSummaries.join('\n\n---\n\n');
-    
-    if (estimatedTokens > maxTokens) {
-      // Truncate partial summaries if too long
-      const maxPartialLength = Math.floor((maxTokens * 4 - finalSummaryContext.length) / partialSummaries.length);
-      const truncatedSummaries = partialSummaries.map(summary => 
-        summary.length > maxPartialLength ? summary.substring(0, maxPartialLength) + '...' : summary
-      );
-      
-      consolidatedText = finalSummaryContext + '\n\n' + truncatedSummaries.join('\n\n---\n\n');
-      
-      if (this.config.isDebugMode()) {
-        console.log(`🔧 ATTN Debug: Truncated summaries to fit token limit (${estimatedTokens} -> ${consolidatedText.length / 4} est. tokens)`);
-      }
-    }
-
-    const consolidatedInput = {
-      text: consolidatedText,
-      segments: [], // Not needed for final consolidation
-      language: verboseResult.language,
-      duration: estimatedDuration,
-      speakers: verboseResult.speakers
-    };
-
-    try {
-      const finalSummary = await summaryProvider.summarize(consolidatedInput, {
-        model: effectiveSummarySettings.model
-      });
-      
-      return finalSummary;
-    } catch (error) {
-      // Fallback: if final consolidation fails, return concatenated partial summaries
-      if (this.config.isDebugMode()) {
-        console.log(`🔧 ATTN Debug: Final consolidation failed, returning concatenated summaries: ${(error as Error).message}`);
-      }
-      
-      return partialSummaries.join('\n\n=== 구간 요약 ===\n\n');
-    }
-  }
-
-  private async createPartialSummaries(
-    verboseResult: VerboseTranscriptionResult, 
-    summaryProvider: any,
-    effectiveSummarySettings: any
-  ): Promise<string[]> {
-    const groupSize = 8; // Reduced from 12 to 8 for better token management
-    const segmentGroups = this.chunkArray(verboseResult.segments, groupSize);
-    const partialSummaries: string[] = [];
-
-    // Process groups sequentially to avoid rate limits (changed from parallel)
-    for (let i = 0; i < segmentGroups.length; i++) {
-      const group = segmentGroups[i];
-      const globalGroupIndex = i;
-      const groupStartTime = group[0]?.start || 0;
-      const groupEndTime = group[group.length - 1]?.end || 0;
-      
-      const groupText = group.map(segment => segment.text).join(' ');
-      
-      // Check text length and truncate if too long
-      const maxGroupLength = 3000; // Conservative limit per group
-      const truncatedGroupText = groupText.length > maxGroupLength ? 
-        groupText.substring(0, maxGroupLength) + '...' : groupText;
-      
-      const groupContext = `
-이것은 회의의 ${this.formatTime(groupStartTime)}부터 ${this.formatTime(groupEndTime)}까지의 내용입니다 (구간 ${globalGroupIndex + 1}/${segmentGroups.length}).
-
-이 구간의 주요 내용을 간결하게 요약해주세요 (2-3문장으로):
-`;
-
-      const input = {
-        text: groupContext + '\n\n' + truncatedGroupText,
-        segments: group,
-        language: verboseResult.language
-      };
-
-      if (this.config.isDebugMode()) {
-        console.log(`🔧 ATTN Debug: Processing group ${globalGroupIndex + 1}/${segmentGroups.length} (${group.length} segments, ${truncatedGroupText.length} chars)`);
-      }
-
-      try {
-        const partialSummary = await summaryProvider.summarize(input, {
-          model: effectiveSummarySettings.model
-        });
-        partialSummaries.push(partialSummary);
-        
-        if (this.config.isDebugMode()) {
-          console.log(`🔧 ATTN Debug: Successfully processed group ${globalGroupIndex + 1}`);
-        }
-      } catch (error) {
-        console.warn(`Failed to create partial summary for group ${globalGroupIndex + 1}:`, error);
-        // Add a fallback summary using the original text
-        const fallbackSummary = `구간 ${globalGroupIndex + 1} (${this.formatTime(groupStartTime)}-${this.formatTime(groupEndTime)}): ${truncatedGroupText.substring(0, 200)}...`;
-        partialSummaries.push(fallbackSummary);
-      }
-
-      // Rate limiting delay between groups
-      if (i < segmentGroups.length - 1) {
-        await this.sleep(1500); // 1.5 second delay between groups
-      }
-    }
-
-    return partialSummaries;
-  }
-
-  private chunkArray<T>(array: T[], chunkSize: number): T[][] {
-    const chunks: T[][] = [];
-    for (let i = 0; i < array.length; i += chunkSize) {
-      chunks.push(array.slice(i, i + chunkSize));
-    }
-    return chunks;
-  }
-
-  private formatTime(seconds: number): string {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
   private estimateAudioDuration(verboseResult: VerboseTranscriptionResult): number {
     if (!verboseResult.segments || verboseResult.segments.length === 0) {
       return 0;
     }
-    
+
     // Find the last segment's end time
     const lastSegment = verboseResult.segments[verboseResult.segments.length - 1];
     return lastSegment.end || 0;
-  }
-
-  private formatTranscriptWithTimestamps(verboseResult: VerboseTranscriptionResult): string {
-    if (!verboseResult.segments || verboseResult.segments.length === 0) {
-      return verboseResult.text || '음성 인식 결과가 없습니다.';
-    }
-
-    const segments = verboseResult.segments;
-    const lines: string[] = [];
-    
-    // Group consecutive segments that are likely from the same speaker
-    let currentGroup: string[] = [];
-    let currentStartTime = 0;
-    let currentEndTime = 0;
-    
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
-      const nextSegment = segments[i + 1];
-      
-      // Initialize group if it's empty
-      if (currentGroup.length === 0) {
-        currentStartTime = segment.start;
-        currentGroup.push(segment.text.trim());
-        currentEndTime = segment.end;
-        continue;
-      }
-      
-      // Check if this segment should be grouped with the previous ones
-      const timeDifference = segment.start - currentEndTime;
-      const shouldGroup = timeDifference < 2.0; // Group segments within 2 seconds
-      
-      if (shouldGroup && currentGroup.length < 5) { // Limit group size
-        currentGroup.push(segment.text.trim());
-        currentEndTime = segment.end;
-      } else {
-        // Finalize current group and start new one
-        const groupText = currentGroup.join(' ').trim();
-        if (groupText) {
-          const timeRange = currentStartTime === currentEndTime 
-            ? this.formatTime(currentStartTime)
-            : `${this.formatTime(currentStartTime)}-${this.formatTime(currentEndTime)}`;
-          lines.push(`**[${timeRange}]**`);
-          lines.push(`${groupText}\n`);
-        }
-        
-        // Start new group
-        currentGroup = [segment.text.trim()];
-        currentStartTime = segment.start;
-        currentEndTime = segment.end;
-      }
-    }
-    
-    // Don't forget the last group
-    if (currentGroup.length > 0) {
-      const groupText = currentGroup.join(' ').trim();
-      if (groupText) {
-        const timeRange = currentStartTime === currentEndTime 
-          ? this.formatTime(currentStartTime)
-          : `${this.formatTime(currentStartTime)}-${this.formatTime(currentEndTime)}`;
-        lines.push(`**[${timeRange}]**`);
-        lines.push(`${groupText}\n`);
-      }
-    }
-    
-    // Add summary statistics at the beginning
-    const totalDuration = verboseResult.duration || this.estimateAudioDuration(verboseResult);
-    const header = `## 📝 음성 인식 원문\n\n` +
-                  `**⏱️ 총 시간:** ${Math.floor(totalDuration / 60)}분 ${Math.floor(totalDuration % 60)}초  ` +
-                  `**🎙️ 세그먼트:** ${segments.length}개  ` +
-                  `**📄 텍스트 길이:** ${verboseResult.text.length.toLocaleString()}자\n\n` +
-                  `---\n\n`;
-    
-    return header + lines.join('\n');
   }
 }

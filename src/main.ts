@@ -1,5 +1,5 @@
 import { App, Plugin, PluginSettingTab, TFile, Notice } from 'obsidian';
-import { ATTNSettings, AudioSpeedOption, VerboseTranscriptionResult } from './types';
+import { ATTNSettings, AudioSpeedOption, VerboseTranscriptionResult, TranscriptionSegment, Speaker } from './types';
 import { ATTNSettingTab } from './settings';
 import { ApiService } from './apiService';
 import { NoteCreator } from './noteCreator';
@@ -84,7 +84,7 @@ const DEFAULT_SETTINGS: ATTNSettings = {
   },
   processing: {
     enableChunking: true,
-    maxUploadSizeMB: 24.5,
+    maxUploadSizeMB: 23, // Conservative limit to prevent 413 errors (accounting for FormData overhead)
     maxChunkDurationSec: 150, // Increased for better context (2.5 minutes)
     targetSampleRateHz: 16000,
     targetChannels: 1,
@@ -93,6 +93,7 @@ const DEFAULT_SETTINGS: ATTNSettings = {
     hardSplitWindowSec: 45, // Increased for better natural breaks
     preserveIntermediates: false,
     contextOverlapSec: 10, // New: Context preservation between chunks
+    apiTimeoutMs: 120000, // 2 minutes timeout for API requests
     diarization: {
       enabled: true, // 회의록에서 화자 분리는 중요하므로 기본 활성화
       provider: 'pyannote',
@@ -353,7 +354,7 @@ export default class ATTNPlugin extends Plugin {
     }
 
     return transcriptionResult.speakers
-      .map((speaker: any) => `- ${speaker.label}`)
+      .map((speaker) => `- ${speaker.label}`)
       .join('\n');
   }
 
@@ -378,12 +379,12 @@ export default class ATTNPlugin extends Plugin {
   /**
    * Group consecutive segments by the same speaker
    */
-  private groupSegmentsBySpeaker(segments: any[]): Array<{speaker: any, text: string}> {
-    const groups: Array<{speaker: any, text: string}> = [];
-    let currentGroup: {speaker: any, text: string} | null = null;
+  private groupSegmentsBySpeaker(segments: TranscriptionSegment[]): Array<{speaker: Speaker | undefined, text: string}> {
+    const groups: Array<{speaker: Speaker | undefined, text: string}> = [];
+    let currentGroup: {speaker: Speaker | undefined, text: string} | null = null;
 
     for (const segment of segments) {
-      if (!currentGroup || 
+      if (!currentGroup ||
           (currentGroup.speaker?.id !== segment.speaker?.id)) {
         // New speaker or no previous group
         if (currentGroup) {
