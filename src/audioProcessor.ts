@@ -497,19 +497,19 @@ export class AudioProcessor {
   }
 
   private async transcribeChunkWithRetry(
-    chunkFile: File, 
+    chunkFile: File,
     settings: ATTNSettings,
-    logContext: LogContext, 
+    logContext: LogContext,
     logger: Logger
   ): Promise<VerboseTranscriptionResult> {
-    const maxRetries = 2;
-    
+    const maxRetries = 3; // Increased from 2 to 3
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Use direct STT provider instead of ApiService to avoid circular dependency
         const { createSttProvider } = await import('./providers/providerFactory');
         const { ConfigLoader } = await import('./configLoader');
-        
+
         const config = ConfigLoader.getInstance();
         const effectiveSttSettings = {
           ...settings.stt,
@@ -519,7 +519,7 @@ export class AudioProcessor {
 
         const sttProvider = createSttProvider(effectiveSttSettings);
         const audioBuffer = await chunkFile.arrayBuffer();
-        
+
         return await sttProvider.transcribe(audioBuffer, {
           format: 'verbose_json',
           language: effectiveSttSettings.language,
@@ -528,25 +528,43 @@ export class AudioProcessor {
       } catch (error) {
         const errorStatus = (error as any).status || (error as any).response?.status;
         const errorCode = (error as any).code;
-        
-        if (this.shouldRetry(errorStatus, errorCode) && attempt < maxRetries) {
-          const delayMs = 500 * attempt; // Simple linear backoff for chunks
+        const errorMessage = (error as any).message || String(error);
+
+        // Check if this is a retryable error
+        const isRetryable = this.shouldRetry(errorStatus, errorCode);
+        const isLastAttempt = attempt >= maxRetries;
+
+        if (isRetryable && !isLastAttempt) {
+          // Exponential backoff: 1s, 2s, 4s
+          const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
+
           await logger.log('warn', {
             ...logContext,
             message: `Chunk transcription failed, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`,
             attempt,
             status: errorStatus,
-            errorCode
+            errorCode,
+            errorMessage: errorMessage.substring(0, 200)
           });
-          
+
           await this.sleep(delayMs);
           continue;
         }
-        
+
+        // Log final error
+        await logger.log('error', {
+          ...logContext,
+          message: `Chunk transcription failed after ${attempt} attempts`,
+          attempt,
+          status: errorStatus,
+          errorCode,
+          errorMessage: errorMessage.substring(0, 200)
+        });
+
         throw error;
       }
     }
-    
+
     throw new Error('Chunk retry logic error');
   }
 
@@ -572,13 +590,13 @@ export class AudioProcessor {
   }
 
   private async processSegmentsBatch(
-    segments: SegmentResult[], 
+    segments: SegmentResult[],
     audioFile: File,
-    settings: ATTNSettings, 
-    logContext: LogContext, 
+    settings: ATTNSettings,
+    logContext: LogContext,
     logger: Logger
   ): Promise<VerboseTranscriptionResult[]> {
-    const batchSize = this.getBatchSize(segments.length);
+    const batchSize = this.getBatchSize(segments.length, settings.stt.provider);
     const results: VerboseTranscriptionResult[] = [];
     
     await logger.log('info', {
@@ -750,7 +768,7 @@ export class AudioProcessor {
 
       // Rate limiting delay between batches (except for last batch)
       if (batchIndex + batchSize < segments.length) {
-        const delayMs = this.getBatchDelay(batchSize);
+        const delayMs = this.getBatchDelay(batchSize, settings.stt.provider);
         await logger.log('info', {
           ...logContext,
           message: `Rate limiting delay: ${delayMs}ms before next batch`
@@ -768,20 +786,53 @@ export class AudioProcessor {
     return results;
   }
 
-  private getBatchSize(totalSegments: number): number {
+  private getBatchSize(totalSegments: number, provider: string = 'openai'): number {
+    // Provider-specific batch sizing
+    // Groq is 70x faster and can handle more parallel requests
+    // Gemini doesn't need chunking for large files, but if we do chunk, can handle more parallel
+    let baseBatchSize = 10;
+
+    if (provider === 'groq') {
+      // Groq is much faster, can process more in parallel
+      baseBatchSize = 20;
+    } else if (provider === 'gemini') {
+      // Gemini can handle larger batches (if we're chunking at all)
+      baseBatchSize = 15;
+    } else {
+      // OpenAI and others
+      baseBatchSize = 10;
+    }
+
     // Dynamic batch sizing based on total segments
     if (totalSegments > 100) {
-      return 15; // Large files: smaller batches for stability
+      return Math.max(Math.floor(baseBatchSize * 1.5), 15); // Large files: larger batches for speed
     } else if (totalSegments > 50) {
-      return 12; // Medium files
+      return Math.max(Math.floor(baseBatchSize * 1.2), 12); // Medium files
     } else {
-      return 10; // Small files: larger batches for speed
+      return baseBatchSize; // Small files
     }
   }
 
-  private getBatchDelay(batchSize: number): number {
+  private getBatchDelay(batchSize: number, provider: string = 'openai'): number {
+    // Provider-specific rate limiting
+    // Groq is much faster and has higher rate limits
+    // Gemini also has generous rate limits
+
+    let baseDelay = 1000; // 1 second baseline
+
+    if (provider === 'groq') {
+      // Groq is 70x faster, can reduce delay significantly
+      baseDelay = 300; // 300ms for groq
+    } else if (provider === 'gemini') {
+      // Gemini has good rate limits
+      baseDelay = 500; // 500ms for gemini
+    } else {
+      // OpenAI and others - more conservative
+      baseDelay = 1000;
+    }
+
     // Progressive delay based on batch size to respect rate limits
-    return Math.max(1000, batchSize * 200); // Minimum 1 second, increase with batch size
+    return Math.max(baseDelay, batchSize * 100);
   }
 
   private estimateFileDuration(sizeBytes: number): number {

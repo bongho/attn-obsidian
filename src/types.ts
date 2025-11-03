@@ -1,5 +1,5 @@
 // Provider Types
-export type SttProvider = 'openai' | 'gemini' | 'local-whisper';
+export type SttProvider = 'openai' | 'gemini' | 'groq' | 'local-whisper';
 export type SummaryProvider = 'openai' | 'gemini' | 'local-llm';
 export type WhisperBackend = 'faster-whisper-cpp' | 'whisper.cpp';
 

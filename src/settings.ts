@@ -192,11 +192,12 @@ export class ATTNSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('STT Provider')
-      .setDesc('Select speech-to-text service provider')
+      .setDesc('Select speech-to-text service provider. Gemini supports up to 2GB files (no chunking needed).')
       .addDropdown(dropdown => dropdown
-        .addOption('openai', 'OpenAI Whisper')
-        .addOption('gemini', 'Google Gemini')
-        .addOption('local-whisper', 'Local Whisper')
+        .addOption('openai', 'OpenAI Whisper (25MB limit)')
+        .addOption('gemini', 'Google Gemini (2GB limit, 81% cheaper)')
+        .addOption('groq', 'Groq Whisper (25MB limit, 90% cheaper, 70x faster)')
+        .addOption('local-whisper', 'Local Whisper (no limits, free)')
         .setValue(this.plugin.settings.stt.provider)
         .onChange(async (value) => {
           this.plugin.settings.stt.provider = value as SttProvider;
@@ -255,12 +256,24 @@ export class ATTNSettingTab extends PluginSettingTab {
           }));
     }
 
-    if (this.plugin.settings.stt.provider === 'openai' || this.plugin.settings.stt.provider === 'gemini') {
+    if (this.plugin.settings.stt.provider === 'openai' || this.plugin.settings.stt.provider === 'gemini' || this.plugin.settings.stt.provider === 'groq') {
+      const apiKeyPlaceholder = this.plugin.settings.stt.provider === 'gemini'
+        ? 'AIza...'
+        : this.plugin.settings.stt.provider === 'groq'
+        ? 'gsk_...'
+        : 'sk-...';
+
+      const apiKeyDesc = this.plugin.settings.stt.provider === 'gemini'
+        ? 'Gemini API key (get from https://makersuite.google.com/app/apikey)'
+        : this.plugin.settings.stt.provider === 'groq'
+        ? 'Groq API key (get from https://console.groq.com)'
+        : 'API key for the selected provider (overrides OpenAI API Key above)';
+
       new Setting(containerEl)
         .setName('STT API Key')
-        .setDesc('API key for the selected provider (overrides OpenAI API Key above)')
+        .setDesc(apiKeyDesc)
         .addText(text => text
-          .setPlaceholder('Enter API key...')
+          .setPlaceholder(apiKeyPlaceholder)
           .setValue(this.plugin.settings.stt.apiKey || '')
           .onChange(async (value) => {
             this.plugin.settings.stt.apiKey = value;

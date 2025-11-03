@@ -12,6 +12,14 @@ export function createSttProvider(settings: SttSettings, timeoutMs?: number): Sp
       return new OpenAiSttProvider(settings, timeoutMs);
     case 'gemini':
       return new GeminiSttProvider(settings, timeoutMs);
+    case 'groq':
+      // Groq uses OpenAI-compatible API with different baseUrl
+      const groqSettings = {
+        ...settings,
+        baseUrl: 'https://api.groq.com/openai/v1',
+        model: settings.model || 'whisper-large-v3'
+      };
+      return new OpenAiSttProvider(groqSettings, timeoutMs);
     case 'local-whisper':
       return new LocalWhisperProvider(settings);
     default:
@@ -22,9 +30,9 @@ export function createSttProvider(settings: SttSettings, timeoutMs?: number): Sp
 export function createSummarizationProvider(settings: SummarySettings, timeoutMs?: number): SummarizationProvider {
   switch (settings.provider) {
     case 'openai':
-      return new OpenAiSummarizationProvider(settings, timeoutMs);
+      return new OpenAiSummarizationProvider(settings);
     case 'gemini':
-      return new GeminiSummarizationProvider(settings, timeoutMs);
+      return new GeminiSummarizationProvider(settings);
     case 'local-llm':
       return new LocalLlmProvider(settings);
     default:
