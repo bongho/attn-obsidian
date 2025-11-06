@@ -1,0 +1,38 @@
+/* ATTN Plugin Styles */
+
+/* MLX Model Download Progress */
+.mlx-download-progress {
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--background-secondary);
+  border-radius: 6px;
+}
+
+.mlx-download-progress .progress-bar-container {
+  width: 100%;
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+  height: 20px;
+  overflow: hidden;
+}
+
+.mlx-download-progress .progress-bar {
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.mlx-download-progress .progress-text {
+  margin-top: 5px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+
+/* Modal Button Container */
+.modal-button-container {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}

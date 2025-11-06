@@ -9,7 +9,7 @@ import * as readline from 'readline';
 import { VerboseTranscriptionResult } from '../types';
 
 export interface MlxRequest {
-  command: 'transcribe' | 'transcribe_batch' | 'load_model' | 'ping' | 'quit';
+  command: 'transcribe' | 'transcribe_batch' | 'load_model' | 'download_model' | 'check_model' | 'list_models' | 'ping' | 'quit';
   audio_path?: string;
   audio_paths?: string[];
   model?: string;
@@ -23,6 +23,9 @@ export interface MlxRequest {
   compression_ratio_threshold?: number;
   logprob_threshold?: number;
   no_speech_threshold?: number;
+  // Model download parameters
+  model_size?: string;
+  cache_path?: string;
 }
 
 export interface MlxResponse {
@@ -71,6 +74,17 @@ export interface MlxResponse {
   temperature_used?: number;
   quality_score?: number;
   fallback_used?: boolean;
+  // Model download fields
+  type?: string;  // For progress events
+  progress?: number;
+  path?: string;
+  size_mb?: number;
+  exists?: boolean;
+  models?: Array<{
+    name: string;
+    size: string;
+    path: string;
+  }>;
 }
 
 export class MlxBridge {
@@ -81,10 +95,12 @@ export class MlxBridge {
     request: MlxRequest;
     resolve: (response: MlxResponse) => void;
     reject: (error: Error) => void;
+    onProgress?: (progress: number, message: string) => void;
   }> = [];
   private currentRequest?: {
     resolve: (response: MlxResponse) => void;
     reject: (error: Error) => void;
+    onProgress?: (progress: number, message: string) => void;
   };
 
   private pythonPath: string;
@@ -130,15 +146,26 @@ export class MlxBridge {
               return;
             }
 
+            // Handle progress events (for download)
+            if (response.type === 'progress' && this.currentRequest?.onProgress) {
+              this.currentRequest.onProgress(
+                response.progress || 0,
+                response.message || ''
+              );
+              return; // Don't resolve yet, waiting for final response
+            }
+
             // Handle regular response
             if (this.currentRequest) {
-              if (response.status === 'success') {
-                this.currentRequest.resolve(response);
-              } else {
-                this.currentRequest.reject(new Error(response.error || 'Unknown error'));
+              if (response.status === 'success' || response.status === 'error') {
+                if (response.status === 'success') {
+                  this.currentRequest.resolve(response);
+                } else {
+                  this.currentRequest.reject(new Error(response.error || 'Unknown error'));
+                }
+                this.currentRequest = undefined;
+                this.processNextRequest();
               }
-              this.currentRequest = undefined;
-              this.processNextRequest();
             }
 
           } catch (error) {
@@ -195,13 +222,16 @@ export class MlxBridge {
   /**
    * Send request to MLX bridge
    */
-  async sendRequest(request: MlxRequest): Promise<MlxResponse> {
+  async sendRequest(
+    request: MlxRequest,
+    onProgress?: (progress: number, message: string) => void
+  ): Promise<MlxResponse> {
     if (!this.isReady || !this.process) {
       throw new Error('MLX bridge not initialized');
     }
 
     return new Promise((resolve, reject) => {
-      this.requestQueue.push({ request, resolve, reject });
+      this.requestQueue.push({ request, resolve, reject, onProgress });
       if (!this.currentRequest) {
         this.processNextRequest();
       }
@@ -216,8 +246,8 @@ export class MlxBridge {
       return;
     }
 
-    const { request, resolve, reject } = this.requestQueue.shift()!;
-    this.currentRequest = { resolve, reject };
+    const { request, resolve, reject, onProgress } = this.requestQueue.shift()!;
+    this.currentRequest = { resolve, reject, onProgress };
 
     // Send request as JSON line
     const requestLine = JSON.stringify(request) + '\n';
@@ -331,6 +361,76 @@ export class MlxBridge {
     }
 
     return response;
+  }
+
+  /**
+   * Download MLX Whisper model with progress tracking
+   */
+  async downloadModel(options: {
+    modelSize: string;
+    cachePath?: string;
+    onProgress?: (progress: number, message: string) => void;
+  }): Promise<MlxResponse> {
+    const request: MlxRequest = {
+      command: 'download_model',
+      model_size: options.modelSize,
+      cache_path: options.cachePath
+    };
+
+    const response = await this.sendRequest(request, options.onProgress);
+
+    if (response.status !== 'success') {
+      throw new Error(response.error || 'Model download failed');
+    }
+
+    return response;
+  }
+
+  /**
+   * Check if model exists in cache
+   */
+  async checkModel(modelSize: string): Promise<{
+    exists: boolean;
+    path?: string;
+    size_mb?: number;
+  }> {
+    const request: MlxRequest = {
+      command: 'check_model',
+      model_size: modelSize
+    };
+
+    const response = await this.sendRequest(request);
+
+    if (response.status !== 'success') {
+      throw new Error(response.error || 'Model check failed');
+    }
+
+    return {
+      exists: response.exists || false,
+      path: response.path,
+      size_mb: response.size_mb
+    };
+  }
+
+  /**
+   * List all downloaded MLX Whisper models
+   */
+  async listModels(): Promise<Array<{
+    name: string;
+    size: string;
+    path: string;
+  }>> {
+    const request: MlxRequest = {
+      command: 'list_models'
+    };
+
+    const response = await this.sendRequest(request);
+
+    if (response.status !== 'success') {
+      throw new Error(response.error || 'List models failed');
+    }
+
+    return response.models || [];
   }
 
   /**

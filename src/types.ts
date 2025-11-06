@@ -121,6 +121,31 @@ export interface SttSettings {
   whisperBinaryPath?: string;
   whisperModelPathOrName?: string;
   whisperBackend?: WhisperBackend;
+
+  // Local MLX Whisper specific settings
+  mlxModelPath?: string;           // Custom model path (optional)
+  mlxSelectedModel?: string;        // Selected model size (tiny/base/small/medium)
+  mlxUseCoreml?: boolean;           // Enable CoreML acceleration
+  mlxModelCachePath?: string;       // HuggingFace cache path override
+  mlxPythonPath?: string;           // Python executable path
+}
+
+// Model Download Status
+export type ModelDownloadStatus = 'idle' | 'downloading' | 'completed' | 'error';
+
+export interface ModelDownloadProgress {
+  modelName: string;
+  status: ModelDownloadStatus;
+  progress: number;  // 0-100
+  message?: string;
+  error?: string;
+}
+
+export interface ModelInfo {
+  name: string;
+  size: string;
+  path: string;
+  exists: boolean;
 }
 
 export interface SummarySettings {

@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice, SuggestModal } from 'obsidian';
+import { App, PluginSettingTab, Setting, Notice, SuggestModal, Modal } from 'obsidian';
 import { ATTNSettings, SttProvider, SummaryProvider, WhisperBackend, ProcessingSettings, LoggingSettings, DiarizationSettings } from './types';
 import ATTNPlugin from './main';
 import { AudioProcessor } from './audioProcessor';
@@ -254,6 +254,102 @@ export class ATTNSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.stt.whisperBinaryPath = value;
             await this.plugin.saveSettings();
+          }));
+    }
+
+    // Local MLX Whisper settings (Apple Silicon only)
+    if (this.plugin.settings.stt.provider === 'local-mlx') {
+      new Setting(containerEl)
+        .setName('MLX Model Size')
+        .setDesc('Select model size (larger = better quality, slower). First download will take time.')
+        .addDropdown(dropdown => dropdown
+          .addOption('tiny', 'Tiny (39MB) - Fastest')
+          .addOption('base', 'Base (74MB) - Fast')
+          .addOption('small', 'Small (244MB) - Balanced')
+          .addOption('medium', 'Medium (769MB) - High Quality (Recommended)')
+          .setValue(this.plugin.settings.stt.mlxSelectedModel || 'medium')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.mlxSelectedModel = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('Python Path (Optional)')
+        .setDesc('Path to Python executable (leave empty for system default). Use virtual environment if you have one.')
+        .addText(text => text
+          .setPlaceholder('/opt/homebrew/bin/python3 or /path/to/venv/bin/python3')
+          .setValue(this.plugin.settings.stt.mlxPythonPath || '')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.mlxPythonPath = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('Model Cache Path (Optional)')
+        .setDesc('Leave empty for default: ~/.cache/huggingface/hub')
+        .addText(text => text
+          .setPlaceholder('/path/to/model/cache')
+          .setValue(this.plugin.settings.stt.mlxModelCachePath || '')
+          .onChange(async (value) => {
+            this.plugin.settings.stt.mlxModelCachePath = value;
+            await this.plugin.saveSettings();
+          }));
+
+      new Setting(containerEl)
+        .setName('Use CoreML Acceleration')
+        .setDesc('Enable Apple Neural Engine for 2-5x faster encoding (experimental)')
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.stt.mlxUseCoreml ?? false)
+          .onChange(async (value) => {
+            this.plugin.settings.stt.mlxUseCoreml = value;
+            await this.plugin.saveSettings();
+          }));
+
+      // Download model section
+      const downloadHeading = containerEl.createEl('h4', {
+        text: 'Model Management',
+        attr: { style: 'margin-top: 20px;' }
+      });
+
+      const downloadSetting = new Setting(containerEl)
+        .setName('Download Model')
+        .setDesc('Pre-download selected model for offline use');
+
+      const progressContainer = downloadSetting.settingEl.createDiv({
+        cls: 'mlx-download-progress',
+        attr: { style: 'display: none; margin-top: 10px;' }
+      });
+
+      const progressBarContainer = progressContainer.createDiv({
+        cls: 'progress-bar-container',
+        attr: { style: 'width: 100%; background: var(--background-modifier-border); border-radius: 4px; height: 20px; overflow: hidden;' }
+      });
+
+      const progressBar = progressBarContainer.createDiv({
+        cls: 'progress-bar',
+        attr: { style: 'width: 0%; height: 100%; background: var(--interactive-accent); transition: width 0.3s ease;' }
+      });
+
+      const progressText = progressContainer.createDiv({
+        cls: 'progress-text',
+        attr: { style: 'margin-top: 5px; font-size: 0.9em; color: var(--text-muted);' },
+        text: ''
+      });
+
+      downloadSetting.addButton(button => button
+        .setButtonText('Download')
+        .setCta()
+        .onClick(async () => {
+          await this.downloadMlxModel(progressContainer, progressBar, progressText);
+        }));
+
+      new Setting(containerEl)
+        .setName('Downloaded Models')
+        .setDesc('View and manage downloaded models')
+        .addButton(button => button
+          .setButtonText('Check Models')
+          .onClick(async () => {
+            await this.checkDownloadedModels();
           }));
     }
 
@@ -990,8 +1086,152 @@ export class ATTNSettingTab extends PluginSettingTab {
         dropdown.style.display = 'none';
       }, 150);
     });
-    
+
     return dropdown;
+  }
+
+  /**
+   * Download MLX Whisper model with progress tracking
+   */
+  private async downloadMlxModel(
+    progressContainer: HTMLElement,
+    progressBar: HTMLElement,
+    progressText: HTMLElement
+  ): Promise<void> {
+    const selectedModel = this.plugin.settings.stt.mlxSelectedModel || 'medium';
+
+    try {
+      // Check if model already exists
+      if (this.plugin.mlxBridge) {
+        const modelCheck = await this.plugin.mlxBridge.checkModel(selectedModel);
+
+        if (modelCheck.exists) {
+          // Ask user to confirm overwrite
+          const confirmed = await this.confirmOverwrite(selectedModel, modelCheck.size_mb || 0);
+          if (!confirmed) return;
+        }
+      }
+
+      // Initialize MLX bridge if not already initialized
+      if (!this.plugin.mlxBridge) {
+        const pythonPath = this.plugin.settings.stt.mlxPythonPath || 'python3';
+        const { MlxBridge } = await import('./utils/mlxBridge');
+        this.plugin.mlxBridge = new MlxBridge(pythonPath);
+        await this.plugin.mlxBridge.initialize();
+      }
+
+      // Show progress container
+      progressContainer.style.display = 'block';
+      progressText.textContent = `Downloading ${selectedModel} model...`;
+      progressBar.style.width = '0%';
+
+      // Download model with progress callback
+      await this.plugin.mlxBridge.downloadModel({
+        modelSize: selectedModel,
+        cachePath: this.plugin.settings.stt.mlxModelCachePath,
+        onProgress: (progress: number, message: string) => {
+          progressBar.style.width = `${progress}%`;
+          progressText.textContent = `${message} (${progress}%)`;
+        }
+      });
+
+      // Success
+      new Notice(`Model ${selectedModel} downloaded successfully!`);
+      progressText.textContent = 'Download complete!';
+
+      // Hide progress after 3 seconds
+      setTimeout(() => {
+        progressContainer.style.display = 'none';
+      }, 3000);
+
+    } catch (error) {
+      console.error('MLX model download error:', error);
+      new Notice(`Download failed: ${error.message}`);
+      progressText.textContent = `Error: ${error.message}`;
+    }
+  }
+
+  /**
+   * Confirm overwrite of existing model
+   */
+  private async confirmOverwrite(modelSize: string, sizeMb: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const modal = new Modal(this.app);
+      modal.titleEl.setText('Model Already Exists');
+      modal.contentEl.createEl('p', {
+        text: `${modelSize} model (${sizeMb.toFixed(2)} MB) is already downloaded. Download again?`
+      });
+
+      const buttonContainer = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+      buttonContainer.style.display = 'flex';
+      buttonContainer.style.justifyContent = 'flex-end';
+      buttonContainer.style.gap = '10px';
+      buttonContainer.style.marginTop = '20px';
+
+      const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+      cancelButton.addEventListener('click', () => {
+        modal.close();
+        resolve(false);
+      });
+
+      const downloadButton = buttonContainer.createEl('button', { text: 'Re-download', cls: 'mod-cta' });
+      downloadButton.addEventListener('click', () => {
+        modal.close();
+        resolve(true);
+      });
+
+      modal.open();
+    });
+  }
+
+  /**
+   * Check and display downloaded models
+   */
+  private async checkDownloadedModels(): Promise<void> {
+    try {
+      // Initialize MLX bridge if not already initialized
+      if (!this.plugin.mlxBridge) {
+        const pythonPath = this.plugin.settings.stt.mlxPythonPath || 'python3';
+        const { MlxBridge } = await import('./utils/mlxBridge');
+        this.plugin.mlxBridge = new MlxBridge(pythonPath);
+        await this.plugin.mlxBridge.initialize();
+      }
+
+      // Get list of downloaded models
+      const models = await this.plugin.mlxBridge.listModels();
+
+      // Show results in a modal
+      const modal = new Modal(this.app);
+      modal.titleEl.setText('Downloaded MLX Models');
+
+      if (models.length === 0) {
+        modal.contentEl.createEl('p', {
+          text: 'No models downloaded yet.'
+        });
+      } else {
+        const list = modal.contentEl.createEl('ul');
+        models.forEach(model => {
+          const item = list.createEl('li');
+          item.createEl('strong', { text: model.name });
+          item.appendText(` - ${model.size}`);
+          item.createEl('br');
+          item.createEl('small', {
+            text: `Path: ${model.path}`,
+            attr: { style: 'color: var(--text-muted);' }
+          });
+        });
+      }
+
+      const closeButton = modal.contentEl.createEl('button', { text: 'Close', cls: 'mod-cta' });
+      closeButton.style.marginTop = '20px';
+      closeButton.addEventListener('click', () => modal.close());
+
+      modal.open();
+
+    } catch (error) {
+      console.error('Check models error:', error);
+      new Notice(`Failed to check models: ${error.message}`);
+    }
   }
 }
 

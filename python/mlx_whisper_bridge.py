@@ -557,6 +557,240 @@ class MlxWhisperBridge:
                 "traceback": traceback.format_exc()
             }
 
+    @staticmethod
+    def _get_dir_size(path: Path) -> int:
+        """Calculate total size of directory in bytes"""
+        total = 0
+        try:
+            for item in path.rglob('*'):
+                if item.is_file():
+                    total += item.stat().st_size
+        except Exception:
+            pass
+        return total
+
+    def download_model(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Pre-download MLX Whisper model with progress reporting
+
+        Args:
+            request: {
+                "model_size": "tiny" | "base" | "small" | "medium",
+                "cache_path": optional custom cache directory
+            }
+
+        Returns:
+            {
+                "status": "success" | "error",
+                "model": model name,
+                "path": download path,
+                "size_mb": size in MB
+            }
+        """
+        try:
+            model_size = request.get("model_size", "medium")
+            cache_path = request.get("cache_path")
+
+            # Validate model size
+            valid_sizes = ["tiny", "base", "small", "medium"]
+            if model_size not in valid_sizes:
+                return {
+                    "status": "error",
+                    "error": f"Invalid model size: {model_size}. Must be one of: {valid_sizes}"
+                }
+
+            # Set custom cache path if provided
+            if cache_path:
+                os.environ['HF_HOME'] = cache_path
+
+            # Construct model name
+            model_name = f"mlx-community/whisper-{model_size}-mlx"
+
+            # Get cache directory
+            cache_dir = Path(os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))).expanduser()
+            model_cache = cache_dir / 'hub' / f'models--mlx-community--whisper-{model_size}-mlx'
+
+            # Send progress: Starting download
+            print(json.dumps({
+                "type": "progress",
+                "progress": 0,
+                "message": f"Starting download of {model_size} model..."
+            }), flush=True)
+
+            # Download model using mlx_whisper's built-in download mechanism
+            # This will download to HuggingFace cache
+            try:
+                # Import huggingface_hub for explicit download
+                try:
+                    from huggingface_hub import snapshot_download
+
+                    # Send progress: Downloading
+                    print(json.dumps({
+                        "type": "progress",
+                        "progress": 10,
+                        "message": f"Downloading {model_name} from HuggingFace..."
+                    }), flush=True)
+
+                    # Download model
+                    downloaded_path = snapshot_download(
+                        repo_id=model_name,
+                        local_dir=None,  # Use default cache
+                        resume_download=True,
+                        local_dir_use_symlinks=False
+                    )
+
+                    # Send progress: Verifying
+                    print(json.dumps({
+                        "type": "progress",
+                        "progress": 90,
+                        "message": "Verifying download..."
+                    }), flush=True)
+
+                    # Calculate size
+                    size_bytes = self._get_dir_size(Path(downloaded_path))
+                    size_mb = round(size_bytes / (1024 * 1024), 2)
+
+                    # Send progress: Complete
+                    print(json.dumps({
+                        "type": "progress",
+                        "progress": 100,
+                        "message": "Download complete!"
+                    }), flush=True)
+
+                    return {
+                        "status": "success",
+                        "model": model_name,
+                        "path": str(downloaded_path),
+                        "size_mb": size_mb
+                    }
+
+                except ImportError:
+                    return {
+                        "status": "error",
+                        "error": "huggingface_hub not installed. Run: pip install huggingface_hub"
+                    }
+
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "error": f"Download failed: {str(e)}",
+                    "traceback": traceback.format_exc()
+                }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+
+    def check_model(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Check if model exists in cache
+
+        Args:
+            request: {
+                "model_size": "tiny" | "base" | "small" | "medium"
+            }
+
+        Returns:
+            {
+                "exists": bool,
+                "path": str or None,
+                "size_mb": float
+            }
+        """
+        try:
+            model_size = request.get("model_size", "medium")
+
+            # Get cache directory
+            cache_dir = Path(os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))).expanduser()
+
+            # Check multiple possible locations
+            possible_paths = [
+                cache_dir / 'hub' / f'models--mlx-community--whisper-{model_size}-mlx',
+                cache_dir / f'mlx-community/whisper-{model_size}-mlx'
+            ]
+
+            for model_cache in possible_paths:
+                if model_cache.exists():
+                    size_bytes = self._get_dir_size(model_cache)
+                    size_mb = round(size_bytes / (1024 * 1024), 2)
+
+                    return {
+                        "status": "success",
+                        "exists": True,
+                        "path": str(model_cache),
+                        "size_mb": size_mb
+                    }
+
+            # Model not found
+            return {
+                "status": "success",
+                "exists": False,
+                "path": None,
+                "size_mb": 0
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+
+    def list_models(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        List all downloaded MLX Whisper models
+
+        Returns:
+            {
+                "status": "success",
+                "models": [
+                    {
+                        "name": "tiny",
+                        "size": "39 MB",
+                        "path": "/path/to/model"
+                    },
+                    ...
+                ]
+            }
+        """
+        try:
+            cache_dir = Path(os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))).expanduser() / 'hub'
+
+            models = []
+
+            if cache_dir.exists():
+                # Search for MLX whisper models
+                for model_dir in cache_dir.glob('models--mlx-community--whisper-*-mlx'):
+                    # Extract model size from directory name
+                    dir_name = model_dir.name
+                    # Format: models--mlx-community--whisper-{size}-mlx
+                    model_size = dir_name.replace('models--mlx-community--whisper-', '').replace('-mlx', '')
+
+                    # Calculate size
+                    size_bytes = self._get_dir_size(model_dir)
+                    size_str = f"{round(size_bytes / (1024**2), 2)} MB"
+
+                    models.append({
+                        "name": model_size,
+                        "size": size_str,
+                        "path": str(model_dir)
+                    })
+
+            return {
+                "status": "success",
+                "models": models
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+
     def process_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming request"""
         command = request.get("command")
@@ -568,6 +802,12 @@ class MlxWhisperBridge:
         elif command == "load_model":
             model_name = request.get("model", "mlx-community/whisper-large-v3-mlx")
             return self.load_model(model_name)
+        elif command == "download_model":
+            return self.download_model(request)
+        elif command == "check_model":
+            return self.check_model(request)
+        elif command == "list_models":
+            return self.list_models(request)
         elif command == "ping":
             return {"status": "success", "message": "pong"}
         elif command == "quit":

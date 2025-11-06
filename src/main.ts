@@ -113,6 +113,7 @@ const DEFAULT_SETTINGS: ATTNSettings = {
 export default class ATTNPlugin extends Plugin {
   settings: ATTNSettings;
   private configLoader: ConfigLoader;
+  mlxBridge?: import('./utils/mlxBridge').MlxBridge;
 
   async onload() {
     this.configLoader = ConfigLoader.getInstance();
