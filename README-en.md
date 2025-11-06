@@ -7,14 +7,29 @@
 
 **📖 Language / 언어**: [English](README-en.md) | [한국어](README.md) | **📋 Documentation**: [PRD (English)](prd.md) | [PRD (한국어)](prd-ko.md)
 
-> 🚀 **High-Quality Obsidian Plugin Built with TDD**  
-> Automatically convert M4A audio files to structured meeting notes using OpenAI Whisper & GPT
+> 🚀 **High-Quality Obsidian Plugin Built with TDD**
+> Automatically convert M4A audio files to structured meeting notes using 5 STT engines (OpenAI, Gemini, Groq, Local Whisper, Local MLX)
 
 ## ✨ Core Features
 
+### ⚡ **5 STT Provider Support** (v2.0 Phase 5A NEW!)
+- **🍎 Local MLX (Apple Silicon Only)**: 16.45x realtime, free, unlimited
+- **⚡ Groq**: 70x realtime, ultra-fast cloud processing
+- **💎 Google Gemini**: 2GB file support, 81% cheaper
+- **🔒 OpenAI Whisper**: Maximum stability and quality
+- **🏠 Local Whisper**: Completely offline, cross-platform
+
+| Provider | Speed | Cost | File Size | Best For |
+|----------|-------|------|-----------|----------|
+| Local MLX | ⭐⭐⭐⭐⭐ | Free | Unlimited | Apple Silicon |
+| Groq | ⭐⭐⭐⭐⭐ | Cheap | 25MB | Fast processing |
+| Gemini | ⭐⭐⭐⭐ | Cheap | 2GB | Long audio |
+| OpenAI | ⭐⭐⭐ | Standard | 25MB | Stability |
+| Local Whisper | ⭐⭐ | Free | Unlimited | Offline |
+
 ### 🎯 **One-Click Automation**
 - Right-click M4A files → Select "ATTN: Generate Note" → Done!
-- Convert speech to text using OpenAI Whisper
+- Convert speech to text using various STT engines
 - Generate structured meeting notes automatically with GPT-4
 
 ### 🛠️ **Advanced Customization** (v2.0 NEW!)
@@ -99,11 +114,58 @@ Or if you want the full source:
   
 ## ⚙️ Initial Setup
 
-1. **Get OpenAI API Key**
-   - Generate API key at [OpenAI Platform](https://platform.openai.com/api-keys)
-   - Payment method registration required (usage-based billing)
+### STT Provider Selection and Configuration
 
-2. **Install FFmpeg** (Optional, for audio speed control)
+#### 🍎 Local MLX (Apple Silicon Only - Recommended)
+**Requirements:**
+- Apple Silicon Mac (M1/M2/M3)
+- Python 3.9 or higher
+- macOS 12.0+
+
+**Installation:**
+```bash
+# Check Python
+python3 --version
+
+# Install MLX Whisper
+cd /path/to/attn-obsidian/python
+python3 -m venv venv
+source venv/bin/activate
+pip install mlx-whisper
+```
+
+**ATTN Configuration:**
+1. STT Provider → Select "Local MLX"
+2. Python Path: Specify virtual environment path (e.g., `.../venv/bin/python3`)
+3. Model: `medium` (recommended) or other sizes
+
+**Performance:** 16.45x realtime, free, unlimited files
+
+📖 **Detailed Guide:** See [MANUAL-en.md](MANUAL-en.md)
+
+#### ⚡ Groq (70x Ultra-Fast)
+- Get API key from [Groq Console](https://console.groq.com/keys)
+- Free tier available
+- 25MB file size limit
+
+#### 💎 Google Gemini (2GB Support)
+- Get API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+- Free tier available (limited)
+- Process up to 2GB files without chunking
+
+#### 🔒 OpenAI Whisper (Maximum Stability)
+- Generate API key at [OpenAI Platform](https://platform.openai.com/api-keys)
+- Payment method required (usage-based billing)
+- 25MB file size limit
+
+#### 🏠 Local Whisper (Completely Offline)
+- Based on whisper.cpp
+- Cross-platform support (Intel Mac, Windows, Linux)
+- Free, unlimited
+
+### Optional
+
+**Install FFmpeg** (Optional, for audio speed control)
    ```bash
    # macOS (Homebrew)
    brew install ffmpeg
@@ -320,18 +382,43 @@ MIT License - See [LICENSE](LICENSE) file for details
 - 💡 **Feature Requests**: [GitHub Discussions](https://github.com/bongho/attn-obsidian/discussions)
 - 📧 **Other Inquiries**: bongho@example.com
 
+## 📊 Performance Benchmarks (Phase 5A)
+
+**Test Environment:** M2 Max, 50-minute audio file
+
+| STT Provider | Processing Time | Realtime Multiplier | Cost | File Size Limit |
+|--------------|----------------|---------------------|------|-----------------|
+| **Local MLX (medium)** | 3m 2s | **16.45x** | Free | Unlimited |
+| **Groq** | ~43s | **70x** | ~$0.30 | 25MB |
+| **Gemini** | ~5m | ~10x | ~$0.03 | 2GB |
+| **OpenAI** | ~8m | ~6x | ~$0.30 | 25MB |
+| **Local Whisper** | ~25m | ~2x | Free | Unlimited |
+
+### 🎯 Recommended Scenarios
+- **Apple Silicon Users**: Local MLX (best performance + free)
+- **Long Audio (1+ hours)**: Gemini (2GB limit, no chunking)
+- **Maximum Speed**: Groq (70x realtime)
+- **Completely Offline**: Local Whisper
+
 ## 📈 Update Roadmap
 
-### v2.1 (Planned)
-- [ ] Support for multiple audio formats (MP3, WAV, etc.)
-- [ ] Full transcript text template support
-- [ ] Batch processing functionality
-- [ ] Custom prompt configuration
+### v2.0 Phase 5A (Completed) ✅
+- [x] 5 STT provider support
+- [x] Local MLX Whisper (Apple Silicon optimized)
+- [x] CoreML hybrid architecture (optional)
+- [x] 16.45x realtime processing speed
+- [x] Local MLX added to Settings UI
 
-### v2.2 (Planned) 
-- [ ] Local AI model support (Whisper.cpp)
-- [ ] Speaker recognition feature
+### v2.1 (Planned)
+- [ ] Full transcript text template support
+- [ ] Automated batch processing
+- [ ] Custom prompt configuration
+- [ ] Automatic CoreML model generation
+
+### v2.2 (Planned)
+- [ ] Speaker recognition (Diarization)
 - [ ] Real-time audio processing
+- [ ] VAD (Voice Activity Detection) optimization
 
 ---
 

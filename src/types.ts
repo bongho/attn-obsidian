@@ -1,5 +1,5 @@
 // Provider Types
-export type SttProvider = 'openai' | 'gemini' | 'groq' | 'local-whisper';
+export type SttProvider = 'openai' | 'gemini' | 'groq' | 'local-whisper' | 'local-mlx';
 export type SummaryProvider = 'openai' | 'gemini' | 'local-llm';
 export type WhisperBackend = 'faster-whisper-cpp' | 'whisper.cpp';
 
@@ -87,11 +87,12 @@ export interface VerboseTranscriptionResult {
 // Provider Interfaces
 export interface SpeechToTextProvider {
   transcribe(
-    input: ArrayBuffer | Buffer | string, 
-    options: { 
-      format: 'verbose_json' | 'text'; 
-      language?: string; 
-      model?: string; 
+    input: ArrayBuffer | Buffer | string,
+    options: {
+      format: 'verbose_json' | 'text';
+      language?: string;
+      model?: string;
+      prompt?: string; // Context from previous chunk for continuity
     }
   ): Promise<VerboseTranscriptionResult>;
 }

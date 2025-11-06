@@ -12,7 +12,8 @@
       "Bash(git push:*)",
       "Bash(git pull:*)",
       "Bash(npm run typecheck:*)",
-      "Bash(npx ts-node:*)"
+      "Bash(npx ts-node:*)",
+      "Bash(bash download-ggml-model.sh:*)"
     ],
     "deny": [],
     "ask": []

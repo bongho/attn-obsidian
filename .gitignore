@@ -46,4 +46,4 @@ full-workflow-test.mjs
 pids
 *.pid
 *.seed
-*.pid.lock
+*.pid.lockpython/whisper.cpp/

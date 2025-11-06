@@ -1,0 +1,8 @@
+# MLX Whisper Bridge Requirements
+# For Apple Silicon (M1/M2/M3) only
+
+mlx-whisper>=0.3.0
+mlx>=0.4.0
+
+# Optional: CoreML encoder for 18x speedup
+# coremltools>=7.0

@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { writeFileSync, unlinkSync, readFileSync, statSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { VadDetector, VadSegment } from './utils/vadDetector';
 
 export type { SegmentOptions, SegmentResult } from './types';
 
@@ -27,6 +28,7 @@ export class AudioSegmenter {
   private ffmpegPath: string | null = null;
   private userFfmpegPath?: string;
   private segmentCache: Map<string, SegmentResult[]> = new Map();
+  private vadDetector: VadDetector | null = null;
   private performanceMetrics: {
     totalProcessingTime: number;
     segmentationTime: number;
@@ -324,30 +326,144 @@ export class AudioSegmenter {
   }
 
   private async detectSilence(inputPath: string, thresholdDb: number, minDurationSec: number): Promise<SilenceInterval[]> {
-    // Enhanced silence detection with adaptive thresholding
+    // Try VAD-based detection first (more accurate than FFmpeg silencedetect)
+    try {
+      const vadIntervals = await this.detectSilenceWithVAD(inputPath, minDurationSec);
+      if (vadIntervals && vadIntervals.length > 0) {
+        console.log(`VAD-based silence detection found ${vadIntervals.length} intervals`);
+        return vadIntervals;
+      }
+    } catch (error) {
+      console.warn('VAD-based detection failed, falling back to FFmpeg silencedetect:', error);
+    }
+
+    // Fallback to FFmpeg silencedetect
     try {
       // First pass: Standard silence detection
       const primaryIntervals = await this.detectSilencePass(inputPath, thresholdDb, minDurationSec);
-      
+
       // If we don't find enough silence intervals for long audio, try with relaxed threshold
       if (primaryIntervals.length < 5 && thresholdDb < -25) {
         const relaxedThreshold = Math.max(-40, thresholdDb - 5);
         console.log(`Insufficient silence intervals found (${primaryIntervals.length}), trying relaxed threshold: ${relaxedThreshold}dB`);
-        
+
         const secondaryIntervals = await this.detectSilencePass(inputPath, relaxedThreshold, minDurationSec * 0.7);
-        
+
         // Merge and deduplicate intervals
         const allIntervals = [...primaryIntervals, ...secondaryIntervals];
         return this.mergeSilenceIntervals(allIntervals);
       }
-      
+
       return primaryIntervals;
-      
+
     } catch (error) {
       console.warn('Silence detection failed, using fallback method:', error);
       // Fallback: Create artificial silence intervals based on audio duration
       return this.generateFallbackSilenceIntervals(inputPath);
     }
+  }
+
+  /**
+   * VAD-based silence detection (more accurate than energy-based silencedetect)
+   * Converts voice segments to silence intervals
+   */
+  private async detectSilenceWithVAD(inputPath: string, minDurationSec: number): Promise<SilenceInterval[] | null> {
+    if (!this.ffmpegPath) {
+      return null; // Need FFmpeg to extract PCM audio
+    }
+
+    // Initialize VAD detector if not already done
+    if (!this.vadDetector) {
+      try {
+        this.vadDetector = new VadDetector({
+          sampleRate: 16000,
+          threshold: 0.5,
+          minSilenceDurationMs: minDurationSec * 1000,
+          speechPadMs: 100,
+          frameSizeMs: 32
+        });
+        await this.vadDetector.initialize();
+      } catch (error) {
+        console.warn('Failed to initialize VAD detector:', error);
+        return null;
+      }
+    }
+
+    // Extract audio as 16kHz mono PCM using FFmpeg
+    const timestamp = Date.now();
+    const pcmPath = join(this.tempDir, `vad_${timestamp}.pcm`);
+
+    try {
+      // Convert to 16kHz mono PCM (raw audio data)
+      const command = `"${this.ffmpegPath}" -i "${inputPath}" -f f32le -acodec pcm_f32le -ac 1 -ar 16000 -y "${pcmPath}"`;
+      await execAsync(command);
+
+      // Read PCM data
+      const pcmData = readFileSync(pcmPath);
+      const audioSamples = new Float32Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 4);
+
+      // Reset VAD state for new audio
+      this.vadDetector.reset();
+
+      // Detect voice segments
+      const voiceSegments = await this.vadDetector.processAudio(audioSamples);
+
+      // Check for pending segment
+      const finalSegment = this.vadDetector.finalize();
+      if (finalSegment) {
+        voiceSegments.push(finalSegment);
+      }
+
+      // Convert voice segments to silence intervals
+      const silenceIntervals = this.convertVoiceSegmentsToSilence(voiceSegments, minDurationSec);
+
+      // Cleanup PCM file
+      if (existsSync(pcmPath)) {
+        unlinkSync(pcmPath);
+      }
+
+      return silenceIntervals;
+
+    } catch (error) {
+      // Cleanup on error
+      if (existsSync(pcmPath)) {
+        unlinkSync(pcmPath);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Convert voice activity segments to silence intervals
+   * Silence is the gaps between voice segments
+   */
+  private convertVoiceSegmentsToSilence(voiceSegments: VadSegment[], minDurationSec: number): SilenceInterval[] {
+    if (voiceSegments.length === 0) {
+      return [];
+    }
+
+    const silenceIntervals: SilenceInterval[] = [];
+
+    // Sort voice segments by start time
+    voiceSegments.sort((a, b) => a.start - b.start);
+
+    // Find gaps between voice segments
+    for (let i = 0; i < voiceSegments.length - 1; i++) {
+      const currentEnd = voiceSegments[i].end;
+      const nextStart = voiceSegments[i + 1].start;
+
+      const silenceDuration = nextStart - currentEnd;
+
+      // Only include silence longer than minimum duration
+      if (silenceDuration >= minDurationSec) {
+        silenceIntervals.push({
+          start: currentEnd,
+          end: nextStart
+        });
+      }
+    }
+
+    return silenceIntervals;
   }
 
   private async detectSilencePass(inputPath: string, thresholdDb: number, minDurationSec: number): Promise<SilenceInterval[]> {

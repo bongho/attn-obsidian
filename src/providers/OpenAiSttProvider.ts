@@ -12,8 +12,8 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
   }
 
   async transcribe(
-    input: ArrayBuffer | Buffer | string, 
-    options: { format: 'verbose_json' | 'text'; language?: string; model?: string }
+    input: ArrayBuffer | Buffer | string,
+    options: { format: 'verbose_json' | 'text'; language?: string; model?: string; prompt?: string }
   ): Promise<VerboseTranscriptionResult> {
     const apiKey = this.settings.apiKey || this.getApiKeyFromEnv();
     if (!apiKey) {
@@ -22,14 +22,20 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
 
     // Convert input to File-like object for FormData
     const audioFile = this.convertToFile(input);
-    
+
     const formData = new FormData();
     formData.append('file', audioFile);
     formData.append('model', options.model || this.settings.model || 'whisper-1');
     formData.append('response_format', options.format || 'verbose_json');
-    
+
     if (options.language || this.settings.language) {
       formData.append('language', options.language || this.settings.language!);
+    }
+
+    // Add prompt for context continuity (Lightning-SimulWhisper inspired)
+    if (options.prompt) {
+      formData.append('prompt', options.prompt);
+      console.log(`Using context prompt: "${options.prompt.substring(0, 50)}..."`);
     }
 
     // Create AbortController for timeout
@@ -61,7 +67,7 @@ export class OpenAiSttProvider implements SpeechToTextProvider {
 
   private async handleResponse(
     response: Response,
-    options: { format: 'verbose_json' | 'text'; language?: string; model?: string }
+    options: { format: 'verbose_json' | 'text'; language?: string; model?: string; prompt?: string }
   ): Promise<VerboseTranscriptionResult> {
 
     if (!response.ok) {

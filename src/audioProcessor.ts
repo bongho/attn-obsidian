@@ -4,11 +4,13 @@ import { writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { v4 as uuidv4 } from 'uuid';
-import { AudioSpeedOption, ATTNSettings, VerboseTranscriptionResult, SegmentResult, SegmentOptions } from './types';
+import { AudioSpeedOption, ATTNSettings, VerboseTranscriptionResult, SegmentResult, SegmentOptions, TranscriptionSegment } from './types';
 import { AudioSegmenter } from './audioSegmenter';
 import { Logger, LogContext } from './logger';
 import { ApiService } from './apiService';
 import { SpeakerDiarizationService } from './speakerDiarization';
+import { CacheManager } from './utils/cacheManager';
+import { BenchmarkReporter, BenchmarkMetrics } from './utils/benchmarkReporter';
 
 const execAsync = promisify(exec);
 
@@ -17,11 +19,18 @@ export class AudioProcessor {
   private ffmpegPath: string | null = null;
   private userFfmpegPath: string;
   private diarizationService?: SpeakerDiarizationService;
+  private cacheManager: CacheManager;
+  private benchmarkReporter: BenchmarkReporter;
+
+  // Benchmark tracking
+  private currentBenchmark: Partial<BenchmarkMetrics> = {};
 
   constructor(userFfmpegPath: string = '') {
     // Use OS temp directory instead of process.cwd() to avoid permission issues in Obsidian
     this.tempDir = join(tmpdir(), 'attn-audio-processing');
     this.userFfmpegPath = userFfmpegPath;
+    this.cacheManager = new CacheManager({ enabled: true });
+    this.benchmarkReporter = new BenchmarkReporter();
   }
 
   private initializeDiarizationService(settings: ATTNSettings): void {
@@ -247,13 +256,13 @@ export class AudioProcessor {
     const requestId = uuidv4();
     const logger = Logger.createLogger(settings.logging);
     const segmenter = new AudioSegmenter(this.userFfmpegPath);
-    
+
     // Initialize diarization service if needed
     this.initializeDiarizationService(settings);
-    
+
     const estimatedDuration = this.estimateFileDuration(audioFile.size);
     const isUltraLong = estimatedDuration > 3600; // Over 1 hour
-    
+
     const logContext: LogContext = {
       requestId,
       provider: settings.stt.provider,
@@ -262,6 +271,32 @@ export class AudioProcessor {
       durationSec: estimatedDuration,
       sizeBytes: audioFile.size
     };
+
+    // Check cache first
+    try {
+      const fileBuffer = await audioFile.arrayBuffer();
+      const cachedResult = await this.cacheManager.get(
+        fileBuffer,
+        audioFile.name,
+        {
+          provider: settings.stt.provider,
+          model: settings.stt.model,
+          language: settings.stt.language || 'ko'
+        }
+      );
+
+      if (cachedResult) {
+        await logger.log('info', {
+          ...logContext,
+          message: 'Using cached transcription result'
+        });
+        console.log(`✓ Cache hit: Skipping transcription for ${audioFile.name}`);
+        return cachedResult;
+      }
+    } catch (error) {
+      // Cache check failed, continue with normal processing
+      console.warn('Cache check failed:', error);
+    }
 
     try {
       // Dynamic segment options based on audio length
@@ -352,6 +387,23 @@ export class AudioProcessor {
         speakerCount: mergedResult.speakers?.length || 0
       });
 
+      // Cache the final result for future use
+      try {
+        const fileBuffer = await audioFile.arrayBuffer();
+        await this.cacheManager.set(
+          fileBuffer,
+          audioFile.name,
+          {
+            provider: settings.stt.provider,
+            model: settings.stt.model,
+            language: settings.stt.language || 'ko'
+          },
+          mergedResult
+        );
+      } catch (error) {
+        console.warn('Cache save failed:', error);
+      }
+
       return mergedResult;
       
     } catch (error) {
@@ -371,7 +423,7 @@ export class AudioProcessor {
       }
       return hasContent;
     });
-    
+
     if (validResults.length === 0) {
       console.warn('All chunks are empty, returning empty result');
       return {
@@ -382,47 +434,72 @@ export class AudioProcessor {
         raw: { chunks: [] }
       };
     }
-    
+
     console.log(`Merging ${validResults.length}/${chunkResults.length} valid chunks`);
-    
-    const combinedText = validResults.map(result => result.text).join(' ');
-    const combinedSegments = [];
-    const rawChunks = [];
-    
+
+    // Enhanced merging with duplicate detection (inspired by Lightning-SimulWhisper TokenBuffer)
+    const combinedTextParts: string[] = [];
+    const combinedSegments: TranscriptionSegment[] = [];
+    const rawChunks: unknown[] = [];
+
     let segmentId = 0;
+    let previousChunkText = '';
+
     for (let i = 0; i < chunkResults.length; i++) {
       const chunkResult = chunkResults[i];
       const segmentOffset = segments[i].startSec;
-      
+
       // Skip empty chunks
       if (!chunkResult.text || !chunkResult.text.trim()) {
         continue;
       }
-      
+
+      let chunkText = chunkResult.text.trim();
+
+      // Detect and remove overlap with previous chunk
+      if (i > 0 && previousChunkText) {
+        chunkText = this.removeChunkOverlap(previousChunkText, chunkText);
+      }
+
+      combinedTextParts.push(chunkText);
+      previousChunkText = chunkText;
+
       // Collect raw data
       if (chunkResult.raw) {
         rawChunks.push(chunkResult.raw);
       }
-      
-      // Merge segments with timeline offset
+
+      // Merge segments with timeline offset and duplicate detection
       if (chunkResult.segments) {
         for (const segment of chunkResult.segments) {
           if (segment.text && segment.text.trim()) {
-            combinedSegments.push({
-              id: segmentId++,
-              start: segment.start + segmentOffset,
-              end: segment.end + segmentOffset,
-              text: segment.text,
-              words: segment.words?.map(word => ({
-                start: word.start + segmentOffset,
-                end: word.end + segmentOffset,
-                word: word.word
-              }))
-            });
+            // Check if this segment might be a duplicate from overlap
+            const segmentTime = segment.start + segmentOffset;
+            const isDuplicate = combinedSegments.some(existingSeg =>
+              Math.abs(existingSeg.start - segmentTime) < 0.5 &&
+              existingSeg.text === segment.text
+            );
+
+            if (!isDuplicate) {
+              combinedSegments.push({
+                id: segmentId++,
+                start: segment.start + segmentOffset,
+                end: segment.end + segmentOffset,
+                text: segment.text,
+                words: segment.words?.map(word => ({
+                  start: word.start + segmentOffset,
+                  end: word.end + segmentOffset,
+                  word: word.word
+                }))
+              });
+            }
           }
         }
       }
     }
+
+    // Smart join: use appropriate separator based on language
+    const combinedText = combinedTextParts.join(' ');
 
     console.log(`Merge result: ${combinedText.length} chars, ${combinedSegments.length} segments`);
     
@@ -450,11 +527,131 @@ export class AudioProcessor {
     return result;
   }
 
+  /**
+   * Remove overlapping text between consecutive chunks
+   * Inspired by Lightning-SimulWhisper's TokenBuffer concept
+   */
+  private removeChunkOverlap(previousText: string, currentText: string): string {
+    // Get last ~30 words or 200 chars of previous chunk
+    const prevWords = previousText.split(/\s+/);
+    const checkLength = Math.min(30, prevWords.length);
+    const prevSuffix = prevWords.slice(-checkLength).join(' ');
+
+    // Get first ~30 words or 200 chars of current chunk
+    const currWords = currentText.split(/\s+/);
+    const currPrefix = currWords.slice(0, Math.min(30, currWords.length)).join(' ');
+
+    // Find longest common substring
+    let maxOverlapLength = 0;
+    let maxOverlapWords = 0;
+
+    // Try different overlap lengths (in words)
+    for (let overlapWords = Math.min(checkLength, currWords.length); overlapWords > 2; overlapWords--) {
+      const prevOverlap = prevWords.slice(-overlapWords).join(' ');
+      const currOverlap = currWords.slice(0, overlapWords).join(' ');
+
+      // Use fuzzy matching (allow minor differences due to transcription variations)
+      const similarity = this.calculateTextSimilarity(prevOverlap, currOverlap);
+
+      if (similarity > 0.8) { // 80% similarity threshold
+        maxOverlapWords = overlapWords;
+        maxOverlapLength = prevOverlap.length;
+        break;
+      }
+    }
+
+    if (maxOverlapWords > 0) {
+      console.log(`Detected ${maxOverlapWords} overlapping words between chunks, removing from current chunk`);
+      // Remove overlapping words from current chunk
+      const deduplicatedWords = currWords.slice(maxOverlapWords);
+      return deduplicatedWords.join(' ');
+    }
+
+    return currentText;
+  }
+
+  /**
+   * Calculate similarity between two text strings (0-1)
+   * Using Levenshtein distance-based similarity
+   */
+  private calculateTextSimilarity(text1: string, text2: string): number {
+    const longer = text1.length > text2.length ? text1 : text2;
+    const shorter = text1.length > text2.length ? text2 : text1;
+
+    if (longer.length === 0) {
+      return 1.0;
+    }
+
+    // Normalize: remove extra spaces, lowercase
+    const norm1 = text1.toLowerCase().replace(/\s+/g, ' ').trim();
+    const norm2 = text2.toLowerCase().replace(/\s+/g, ' ').trim();
+
+    // Simple exact match first
+    if (norm1 === norm2) {
+      return 1.0;
+    }
+
+    // Calculate Levenshtein distance
+    const distance = this.levenshteinDistance(norm1, norm2);
+    const maxLength = Math.max(norm1.length, norm2.length);
+
+    return (maxLength - distance) / maxLength;
+  }
+
+  /**
+   * Calculate Levenshtein distance between two strings
+   */
+  private levenshteinDistance(str1: string, str2: string): number {
+    const matrix: number[][] = [];
+
+    for (let i = 0; i <= str2.length; i++) {
+      matrix[i] = [i];
+    }
+
+    for (let j = 0; j <= str1.length; j++) {
+      matrix[0][j] = j;
+    }
+
+    for (let i = 1; i <= str2.length; i++) {
+      for (let j = 1; j <= str1.length; j++) {
+        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // substitution
+            matrix[i][j - 1] + 1,     // insertion
+            matrix[i - 1][j] + 1      // deletion
+          );
+        }
+      }
+    }
+
+    return matrix[str2.length][str1.length];
+  }
+
+  /**
+   * Generate context prompt from previous chunk text
+   * Lightning-SimulWhisper TokenBuffer concept: use last N words as context
+   */
+  private generateContextPrompt(previousText: string): string {
+    // Extract last 20-30 words or ~224 characters (Whisper's prompt limit is 244 chars)
+    const words = previousText.trim().split(/\s+/);
+    const lastWords = words.slice(-25); // Take last 25 words
+    const prompt = lastWords.join(' ');
+
+    // Ensure within Whisper's 224 character limit (leaving buffer for safety)
+    if (prompt.length > 220) {
+      return prompt.substring(prompt.length - 220);
+    }
+
+    return prompt;
+  }
+
   private validateSegmentTimeline(segments: SegmentResult[]): void {
     for (let i = 1; i < segments.length; i++) {
       const prevEnd = segments[i - 1].endSec;
       const currentStart = segments[i].startSec;
-      
+
       if (Math.abs(currentStart - prevEnd) > 1.0) { // Allow 1 second tolerance
         throw new Error(`Timeline gap detected between segments ${i - 1} and ${i}: ${prevEnd}s to ${currentStart}s`);
       }
@@ -500,7 +697,8 @@ export class AudioProcessor {
     chunkFile: File,
     settings: ATTNSettings,
     logContext: LogContext,
-    logger: Logger
+    logger: Logger,
+    contextPrompt?: string
   ): Promise<VerboseTranscriptionResult> {
     const maxRetries = 3; // Increased from 2 to 3
 
@@ -523,7 +721,8 @@ export class AudioProcessor {
         return await sttProvider.transcribe(audioBuffer, {
           format: 'verbose_json',
           language: effectiveSttSettings.language,
-          model: effectiveSttSettings.model
+          model: effectiveSttSettings.model,
+          prompt: contextPrompt
         });
       } catch (error) {
         const errorStatus = (error as any).status || (error as any).response?.status;
@@ -598,7 +797,7 @@ export class AudioProcessor {
   ): Promise<VerboseTranscriptionResult[]> {
     const batchSize = this.getBatchSize(segments.length, settings.stt.provider);
     const results: VerboseTranscriptionResult[] = [];
-    
+
     await logger.log('info', {
       ...logContext,
       message: `Starting batch processing with batch size: ${batchSize}`,
@@ -606,12 +805,15 @@ export class AudioProcessor {
       estimatedBatches: Math.ceil(segments.length / batchSize)
     });
 
+    // Track previous chunk text for context continuity
+    let previousChunkContext = '';
+
     // Process segments in batches
     for (let batchIndex = 0; batchIndex < segments.length; batchIndex += batchSize) {
       const batch = segments.slice(batchIndex, batchIndex + batchSize);
       const batchNumber = Math.floor(batchIndex / batchSize) + 1;
       const totalBatches = Math.ceil(segments.length / batchSize);
-      
+
       await logger.log('info', {
         ...logContext,
         message: `Processing batch ${batchNumber}/${totalBatches} (${batch.length} segments)`,
@@ -633,10 +835,21 @@ export class AudioProcessor {
         try {
           // Convert segment to File object for API
           const chunkFile = await this.segmentToFile(segment, `${audioFile.name}_chunk_${globalIndex}`);
-          
-          // Transcribe chunk with retry logic
-          const result = await this.transcribeChunkWithRetry(chunkFile, settings, chunkLogContext, logger);
-          
+
+          // Generate context prompt from previous chunk (Lightning-SimulWhisper inspired)
+          const contextPrompt = globalIndex > 0 && previousChunkContext
+            ? this.generateContextPrompt(previousChunkContext)
+            : undefined;
+
+          // Transcribe chunk with retry logic and context
+          const result = await this.transcribeChunkWithRetry(
+            chunkFile,
+            settings,
+            chunkLogContext,
+            logger,
+            contextPrompt
+          );
+
           // Validate transcription result
           if (!result.text || result.text.trim() === '') {
             console.warn(`🔍 CHUNK ${globalIndex + 1}: Empty transcription detected`);
@@ -758,7 +971,16 @@ export class AudioProcessor {
       // Sort results by index to maintain order
       successfulResults.sort((a, b) => a.index - b.index);
       results.push(...successfulResults.map(item => item.result));
-      
+
+      // Update context from last successful result in batch for continuity
+      if (successfulResults.length > 0) {
+        const lastResult = successfulResults[successfulResults.length - 1].result;
+        if (lastResult.text && lastResult.text.trim()) {
+          previousChunkContext = lastResult.text;
+          console.log(`Updated context from chunk ${successfulResults[successfulResults.length - 1].index + 1}: "${previousChunkContext.substring(previousChunkContext.length - 50)}"`);
+        }
+      }
+
       await logger.log('info', {
         ...logContext,
         message: `Completed batch ${batchNumber}/${totalBatches}`,

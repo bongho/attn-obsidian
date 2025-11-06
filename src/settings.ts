@@ -198,6 +198,7 @@ export class ATTNSettingTab extends PluginSettingTab {
         .addOption('gemini', 'Google Gemini (2GB limit, 81% cheaper)')
         .addOption('groq', 'Groq Whisper (25MB limit, 90% cheaper, 70x faster)')
         .addOption('local-whisper', 'Local Whisper (no limits, free)')
+        .addOption('local-mlx', 'Local MLX (Apple Silicon, no limits, free, fast)')
         .setValue(this.plugin.settings.stt.provider)
         .onChange(async (value) => {
           this.plugin.settings.stt.provider = value as SttProvider;

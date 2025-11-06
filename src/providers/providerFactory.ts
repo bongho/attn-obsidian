@@ -4,6 +4,7 @@ import { OpenAiSummarizationProvider } from './OpenAiSummarizationProvider';
 import { GeminiSttProvider } from './GeminiSttProvider';
 import { GeminiSummarizationProvider } from './GeminiSummarizationProvider';
 import { LocalWhisperProvider } from './LocalWhisperProvider';
+import { LocalMlxWhisperProvider } from './LocalMlxWhisperProvider';
 import { LocalLlmProvider } from './LocalLlmProvider';
 
 export function createSttProvider(settings: SttSettings, timeoutMs?: number): SpeechToTextProvider {
@@ -22,6 +23,8 @@ export function createSttProvider(settings: SttSettings, timeoutMs?: number): Sp
       return new OpenAiSttProvider(groqSettings, timeoutMs);
     case 'local-whisper':
       return new LocalWhisperProvider(settings);
+    case 'local-mlx':
+      return new LocalMlxWhisperProvider(settings);
     default:
       throw new Error(`Unknown STT provider: ${(settings as any).provider}`);
   }

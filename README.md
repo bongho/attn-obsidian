@@ -7,14 +7,29 @@
 
 **📖 Language / 언어**: [English](README-en.md) | [한국어](README.md) | **📋 Documentation**: [PRD (English)](prd.md) | [PRD (한국어)](prd-ko.md)
 
-> 🚀 **TDD로 구축된 고품질 Obsidian 플러그인**  
-> M4A 오디오 파일을 OpenAI Whisper & GPT를 통해 체계적인 회의록으로 자동 변환
+> 🚀 **TDD로 구축된 고품질 Obsidian 플러그인**
+> M4A 오디오 파일을 5가지 STT 엔진(OpenAI, Gemini, Groq, Local Whisper, Local MLX)을 통해 체계적인 회의록으로 자동 변환
 
 ## ✨ 핵심 기능
 
+### ⚡ **5가지 STT 제공자 지원** (v2.0 Phase 5A NEW!)
+- **🍎 Local MLX (Apple Silicon 전용)**: 16.45x realtime, 무료, 무제한
+- **⚡ Groq**: 70x realtime, 초고속 클라우드 처리
+- **💎 Google Gemini**: 2GB 파일 지원, 81% 저렴
+- **🔒 OpenAI Whisper**: 최고 안정성과 품질
+- **🏠 Local Whisper**: 완전 오프라인, 크로스 플랫폼
+
+| 제공자 | 속도 | 비용 | 파일크기 | 추천 |
+|--------|------|------|---------|------|
+| Local MLX | ⭐⭐⭐⭐⭐ | 무료 | 무제한 | Apple Silicon |
+| Groq | ⭐⭐⭐⭐⭐ | 저렴 | 25MB | 빠른 처리 |
+| Gemini | ⭐⭐⭐⭐ | 저렴 | 2GB | 긴 오디오 |
+| OpenAI | ⭐⭐⭐ | 표준 | 25MB | 안정성 |
+| Local Whisper | ⭐⭐ | 무료 | 무제한 | 오프라인 |
+
 ### 🎯 **원클릭 자동화**
 - M4A 파일 우클릭 → "ATTN: 노트 생성하기" 선택만으로 완료
-- OpenAI Whisper로 음성을 텍스트로 변환
+- 다양한 STT 엔진으로 음성을 텍스트로 변환
 - GPT-4로 구조화된 회의록 자동 생성
 
 ### 🛠️ **고급 커스터마이징** (v2.0 NEW!)
@@ -99,11 +114,58 @@
   
 ## ⚙️ 초기 설정
 
-1. **OpenAI API 키 획득**
-   - [OpenAI Platform](https://platform.openai.com/api-keys)에서 API 키 생성
-   - 결제 방법 등록 필요 (사용량 기반 과금)
+### STT 제공자 선택 및 설정
 
-2. **FFmpeg 설치** (오디오 속도 조절용, 선택사항)
+#### 🍎 Local MLX (Apple Silicon 전용 - 권장)
+**필수 요구사항:**
+- Apple Silicon Mac (M1/M2/M3)
+- Python 3.9 이상
+- macOS 12.0+
+
+**설치:**
+```bash
+# Python 확인
+python3 --version
+
+# MLX Whisper 설치
+cd /path/to/attn-obsidian/python
+python3 -m venv venv
+source venv/bin/activate
+pip install mlx-whisper
+```
+
+**ATTN 설정:**
+1. STT Provider → "Local MLX" 선택
+2. Python Path: 가상환경 경로 지정 (예: `.../venv/bin/python3`)
+3. Model: `medium` (권장) 또는 다른 크기 선택
+
+**성능:** 16.45x realtime, 무료, 무제한 파일
+
+📖 **상세 가이드:** [MANUAL-ko.md](MANUAL-ko.md) 참조
+
+#### ⚡ Groq (70x 초고속)
+- [Groq Console](https://console.groq.com/keys)에서 API 키 발급
+- 무료 티어 사용 가능
+- 25MB 파일 크기 제한
+
+#### 💎 Google Gemini (2GB 지원)
+- [Google AI Studio](https://makersuite.google.com/app/apikey)에서 API 키 발급
+- 무료 티어 사용 가능 (제한적)
+- 2GB 파일까지 청킹 없이 처리
+
+#### 🔒 OpenAI Whisper (최고 안정성)
+- [OpenAI Platform](https://platform.openai.com/api-keys)에서 API 키 생성
+- 결제 방법 등록 필요 (사용량 기반 과금)
+- 25MB 파일 크기 제한
+
+#### 🏠 Local Whisper (완전 오프라인)
+- whisper.cpp 기반
+- 크로스 플랫폼 지원 (Intel Mac, Windows, Linux)
+- 무료, 무제한
+
+### 선택 사항
+
+**FFmpeg 설치** (오디오 속도 조절용, 선택사항)
    ```bash
    # macOS (Homebrew)
    brew install ffmpeg
@@ -350,18 +412,43 @@ MIT License - 자세한 내용은 [LICENSE](LICENSE) 파일 참조
 - 💡 **기능 요청**: [GitHub Discussions](https://github.com/bongho/attn-obsidian/discussions)
 - 📧 **기타 문의**: bongho@example.com
 
+## 📊 성능 벤치마크 (Phase 5A)
+
+**테스트 환경:** M2 Max, 50분 오디오 파일
+
+| STT 제공자 | 처리 시간 | 실시간 배율 | 비용 | 파일 크기 제한 |
+|-----------|----------|-----------|------|-------------|
+| **Local MLX (medium)** | 3분 2초 | **16.45x** | 무료 | 무제한 |
+| **Groq** | ~43초 | **70x** | ~$0.30 | 25MB |
+| **Gemini** | ~5분 | ~10x | ~$0.03 | 2GB |
+| **OpenAI** | ~8분 | ~6x | ~$0.30 | 25MB |
+| **Local Whisper** | ~25분 | ~2x | 무료 | 무제한 |
+
+### 🎯 권장 사용 시나리오
+- **Apple Silicon 사용자**: Local MLX (최고 성능 + 무료)
+- **긴 오디오 (1시간+)**: Gemini (2GB 제한, 청킹 불필요)
+- **최고 속도**: Groq (70x realtime)
+- **완전 오프라인**: Local Whisper
+
 ## 📈 업데이트 로드맵
 
-### v2.1 (계획)
-- [ ] 다중 오디오 형식 지원 (MP3, WAV, etc.)
-- [ ] Transcript 전문 텍스트 템플릿 지원
-- [ ] 배치 처리 기능
-- [ ] 커스텀 프롬프트 설정
+### v2.0 Phase 5A (완료) ✅
+- [x] 5가지 STT 제공자 지원
+- [x] Local MLX Whisper (Apple Silicon 최적화)
+- [x] CoreML 하이브리드 아키텍처 (선택사항)
+- [x] 16.45x realtime 처리 속도
+- [x] Settings UI에 Local MLX 추가
 
-### v2.2 (계획) 
-- [ ] 로컬 AI 모델 지원 (Whisper.cpp)
-- [ ] 화자 인식 기능
+### v2.1 (계획)
+- [ ] Transcript 전문 텍스트 템플릿 지원
+- [ ] 배치 처리 자동화
+- [ ] 커스텀 프롬프트 설정
+- [ ] CoreML 모델 자동 생성
+
+### v2.2 (계획)
+- [ ] 화자 인식 기능 (Diarization)
 - [ ] 실시간 오디오 처리
+- [ ] VAD (Voice Activity Detection) 최적화
 
 ---
 
