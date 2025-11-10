@@ -17,10 +17,12 @@ export class LocalMlxWhisperProvider implements SpeechToTextProvider {
   private envChecker: PythonEnvChecker;
   private isInitialized = false;
   private initPromise?: Promise<void>;
+  private bridgeScriptPath?: string;
 
-  constructor(settings: SttSettings) {
+  constructor(settings: SttSettings, bridgeScriptPath?: string) {
     this.settings = settings;
     this.envChecker = PythonEnvChecker.getInstance();
+    this.bridgeScriptPath = bridgeScriptPath;
   }
 
   /**
@@ -58,7 +60,7 @@ export class LocalMlxWhisperProvider implements SpeechToTextProvider {
 
         // Initialize bridge
         const pythonPath = envStatus.pythonPath || 'python3';
-        this.mlxBridge = new MlxBridge(pythonPath);
+        this.mlxBridge = new MlxBridge(pythonPath, this.bridgeScriptPath);
         await this.mlxBridge.initialize();
 
         // Optionally preload model

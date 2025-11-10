@@ -239,6 +239,8 @@ export interface ATTNSettings {
   summary: SummarySettings;
   processing: ProcessingSettings;
   logging: LoggingSettings;
+  // Internal runtime paths (not saved, set by plugin)
+  _mlxBridgeScriptPath?: string;
 }
 
 export type AudioSpeedOption = 1 | 2 | 3;

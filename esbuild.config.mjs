@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import fs from "fs";
+import path from "path";
 
 const banner =
 `/*
@@ -10,6 +12,80 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === 'production');
+
+// Copy VAD model files
+const copyVadAssets = {
+	name: 'copy-vad-assets',
+	setup(build) {
+		build.onEnd(() => {
+			try {
+				const vadWebDist = 'node_modules/@ricky0123/vad-web/dist';
+				const onnxDist = 'node_modules/onnxruntime-web/dist';
+				const targetDir = '.';
+
+				// Copy VAD model files
+				const vadFiles = ['vad.worklet.bundle.min.js', 'silero_vad_v5.onnx', 'silero_vad_legacy.onnx'];
+				vadFiles.forEach(file => {
+					const src = path.join(vadWebDist, file);
+					if (fs.existsSync(src)) {
+						fs.copyFileSync(src, path.join(targetDir, file));
+						console.log(`Copied ${file}`);
+					} else {
+						console.warn(`VAD file not found: ${src}`);
+					}
+				});
+
+				// Copy ONNX Runtime WASM files
+				if (fs.existsSync(onnxDist)) {
+					const wasmFiles = fs.readdirSync(onnxDist).filter(f =>
+						f.endsWith('.wasm') || f.endsWith('.mjs')
+					);
+					wasmFiles.forEach(file => {
+						fs.copyFileSync(
+							path.join(onnxDist, file),
+							path.join(targetDir, file)
+						);
+						console.log(`Copied ${file}`);
+					});
+				}
+
+				// Copy Python files for MLX bridge
+				const pythonDir = 'python';
+				const targetPythonDir = path.join(targetDir, 'python');
+
+				if (fs.existsSync(pythonDir)) {
+					// Create python directory in target
+					if (!fs.existsSync(targetPythonDir)) {
+						fs.mkdirSync(targetPythonDir, { recursive: true });
+					}
+
+					// Copy all .py files
+					const pythonFiles = fs.readdirSync(pythonDir).filter(f => f.endsWith('.py'));
+					pythonFiles.forEach(file => {
+						fs.copyFileSync(
+							path.join(pythonDir, file),
+							path.join(targetPythonDir, file)
+						);
+						console.log(`Copied python/${file}`);
+					});
+
+					// Copy requirements.txt if exists
+					if (fs.existsSync(path.join(pythonDir, 'requirements.txt'))) {
+						fs.copyFileSync(
+							path.join(pythonDir, 'requirements.txt'),
+							path.join(targetPythonDir, 'requirements.txt')
+						);
+						console.log('Copied python/requirements.txt');
+					}
+				}
+
+				console.log('VAD assets copied successfully');
+			} catch (error) {
+				console.error('Error copying VAD assets:', error);
+			}
+		});
+	}
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -31,14 +107,14 @@ const context = await esbuild.context({
 		'@lezer/common',
 		'@lezer/highlight',
 		'@lezer/lr',
-		'onnxruntime-node',
 		...builtins],
 	format: 'cjs',
-	target: 'es2018',
+	target: 'es2020',
 	logLevel: "info",
 	sourcemap: prod ? false : 'inline',
 	treeShaking: true,
 	outfile: 'main.js',
+	plugins: [copyVadAssets],
 });
 
 if (prod) {

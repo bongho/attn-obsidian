@@ -715,7 +715,11 @@ export class AudioProcessor {
           language: settings.stt.language || config.getOpenAISettings()?.language || 'ko'
         };
 
-        const sttProvider = createSttProvider(effectiveSttSettings);
+        const sttProvider = createSttProvider(
+          effectiveSttSettings,
+          undefined,
+          settings._mlxBridgeScriptPath
+        );
         const audioBuffer = await chunkFile.arrayBuffer();
 
         return await sttProvider.transcribe(audioBuffer, {

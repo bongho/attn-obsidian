@@ -1114,10 +1114,36 @@ export class ATTNSettingTab extends PluginSettingTab {
 
       // Initialize MLX bridge if not already initialized
       if (!this.plugin.mlxBridge) {
+        progressText.textContent = 'Initializing MLX bridge...';
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+
         const pythonPath = this.plugin.settings.stt.mlxPythonPath || 'python3';
+        const bridgeScriptPath = this.plugin.getMlxBridgeScriptPath();
+
+        console.log('MLX Bridge initialization:', {
+          pythonPath,
+          bridgeScriptPath
+        });
+
         const { MlxBridge } = await import('./utils/mlxBridge');
-        this.plugin.mlxBridge = new MlxBridge(pythonPath);
-        await this.plugin.mlxBridge.initialize();
+        const bridge = new MlxBridge(pythonPath, bridgeScriptPath);
+
+        try {
+          await bridge.initialize();
+          this.plugin.mlxBridge = bridge;
+          console.log('MLX Bridge initialized successfully');
+        } catch (initError) {
+          console.error('MLX Bridge initialization failed:', initError);
+          progressContainer.style.display = 'none';
+          throw new Error(
+            `Failed to initialize MLX bridge: ${initError.message}\n\n` +
+            `Please ensure:\n` +
+            `1. Python 3 is installed\n` +
+            `2. mlx-whisper is installed (pip install mlx-whisper)\n` +
+            `3. Python path is correct in settings`
+          );
+        }
       }
 
       // Show progress container
@@ -1192,9 +1218,24 @@ export class ATTNSettingTab extends PluginSettingTab {
       // Initialize MLX bridge if not already initialized
       if (!this.plugin.mlxBridge) {
         const pythonPath = this.plugin.settings.stt.mlxPythonPath || 'python3';
+        const bridgeScriptPath = this.plugin.getMlxBridgeScriptPath();
         const { MlxBridge } = await import('./utils/mlxBridge');
-        this.plugin.mlxBridge = new MlxBridge(pythonPath);
-        await this.plugin.mlxBridge.initialize();
+        const bridge = new MlxBridge(pythonPath, bridgeScriptPath);
+
+        try {
+          await bridge.initialize();
+          this.plugin.mlxBridge = bridge;
+        } catch (initError) {
+          console.error('MLX Bridge initialization failed:', initError);
+          new Notice(
+            `Failed to initialize MLX bridge: ${initError.message}\n\n` +
+            `Please ensure:\n` +
+            `1. Python 3 is installed\n` +
+            `2. mlx-whisper is installed (pip install mlx-whisper)\n` +
+            `3. Python path is correct in settings`
+          );
+          return;
+        }
       }
 
       // Get list of downloaded models

@@ -41,10 +41,10 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@ricky0123/vad-web": "^0.0.29",
     "@types/uuid": "^10.0.0",
     "jsdom": "^26.1.0",
     "moment": "^2.30.1",
-    "onnxruntime-node": "^1.23.2",
     "openai": "^4.20.0",
     "uuid": "^12.0.0"
   }

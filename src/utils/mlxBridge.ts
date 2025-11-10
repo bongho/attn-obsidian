@@ -106,10 +106,15 @@ export class MlxBridge {
   private pythonPath: string;
   private bridgeScriptPath: string;
 
-  constructor(pythonPath: string = 'python3') {
+  constructor(pythonPath: string = 'python3', bridgeScriptPath?: string) {
     this.pythonPath = pythonPath;
-    // Assume bridge script is in project root/python directory
-    this.bridgeScriptPath = join(__dirname, '../../python/mlx_whisper_bridge.py');
+    // Use provided path or default to plugin directory
+    if (bridgeScriptPath) {
+      this.bridgeScriptPath = bridgeScriptPath;
+    } else {
+      // Default path for development/testing
+      this.bridgeScriptPath = join(__dirname, '../../python/mlx_whisper_bridge.py');
+    }
   }
 
   /**
@@ -122,10 +127,17 @@ export class MlxBridge {
 
     return new Promise((resolve, reject) => {
       try {
+        console.log('MLX Bridge: Starting initialization', {
+          pythonPath: this.pythonPath,
+          bridgeScriptPath: this.bridgeScriptPath
+        });
+
         // Spawn Python process
         this.process = spawn(this.pythonPath, [this.bridgeScriptPath], {
           stdio: ['pipe', 'pipe', 'pipe']
         });
+
+        console.log('MLX Bridge: Process spawned, PID:', this.process.pid);
 
         // Set up readline for JSON responses
         this.reader = readline.createInterface({

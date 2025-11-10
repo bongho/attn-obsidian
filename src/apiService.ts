@@ -404,7 +404,11 @@ export class ApiService {
 
       // Get timeout from settings
       const timeout = this.settings.processing?.apiTimeoutMs;
-      const sttProvider = createSttProvider(effectiveSttSettings, timeout);
+      const sttProvider = createSttProvider(
+        effectiveSttSettings,
+        timeout,
+        this.settings._mlxBridgeScriptPath
+      );
       
       console.log('🔍 DIRECT STT: About to read arrayBuffer from audioFile:', {
         fileName: audioFile.name,

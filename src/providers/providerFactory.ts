@@ -7,7 +7,11 @@ import { LocalWhisperProvider } from './LocalWhisperProvider';
 import { LocalMlxWhisperProvider } from './LocalMlxWhisperProvider';
 import { LocalLlmProvider } from './LocalLlmProvider';
 
-export function createSttProvider(settings: SttSettings, timeoutMs?: number): SpeechToTextProvider {
+export function createSttProvider(
+  settings: SttSettings,
+  timeoutMs?: number,
+  mlxBridgeScriptPath?: string
+): SpeechToTextProvider {
   switch (settings.provider) {
     case 'openai':
       return new OpenAiSttProvider(settings, timeoutMs);
@@ -24,7 +28,7 @@ export function createSttProvider(settings: SttSettings, timeoutMs?: number): Sp
     case 'local-whisper':
       return new LocalWhisperProvider(settings);
     case 'local-mlx':
-      return new LocalMlxWhisperProvider(settings);
+      return new LocalMlxWhisperProvider(settings, mlxBridgeScriptPath);
     default:
       throw new Error(`Unknown STT provider: ${(settings as any).provider}`);
   }

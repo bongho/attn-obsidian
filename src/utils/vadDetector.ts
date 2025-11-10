@@ -1,16 +1,14 @@
 /**
  * Silero VAD (Voice Activity Detection) Wrapper
- * Based on Lightning-SimulWhisper implementation
+ * Web-based implementation using @ricky0123/vad-web
  *
  * Features:
- * - ONNX-based VAD for accurate speech detection
- * - Stateful processing with hidden state management
- * - Context window preservation (64 samples)
- * - Hysteresis for stable speech/silence transitions
+ * - Browser-compatible VAD using ONNX Runtime Web
+ * - Works in Electron/Obsidian environment
+ * - Compatible with original vadDetector interface
  */
 
-import * as ort from 'onnxruntime-node';
-import * as path from 'path';
+import { NonRealTimeVAD } from '@ricky0123/vad-web';
 
 export interface VadConfig {
 	/** Sample rate (8000 or 16000 Hz only) */
@@ -41,26 +39,9 @@ export interface VadSegment {
 }
 
 export class VadDetector {
-	private session: ort.InferenceSession | null = null;
+	private vad: NonRealTimeVAD | null = null;
 	private config: VadConfig;
-
-	// State management (2, 1, 128) as per Silero VAD spec
-	private hiddenState: Float32Array;
-
-	// Context buffer (64 samples)
-	private context: Float32Array;
-
-	// Frame size in samples
-	private frameSizeSamples: number;
-
-	// Context size in samples
-	private readonly CONTEXT_SIZE = 64;
-
-	// Speech detection state
-	private isSpeaking = false;
-	private speechStartTime = 0;
-	private silenceStartTime = 0;
-	private lastProcessedTime = 0;
+	private isInitialized = false;
 
 	constructor(config: Partial<VadConfig> = {}) {
 		this.config = {
@@ -76,29 +57,26 @@ export class VadDetector {
 		if (this.config.sampleRate !== 16000 && this.config.sampleRate !== 8000) {
 			throw new Error('Sample rate must be 8000 or 16000 Hz');
 		}
-
-		// Calculate frame size in samples
-		this.frameSizeSamples = Math.floor(
-			(this.config.sampleRate * this.config.frameSizeMs) / 1000
-		);
-
-		// Initialize state
-		this.hiddenState = new Float32Array(2 * 1 * 128).fill(0);
-		this.context = new Float32Array(this.CONTEXT_SIZE).fill(0);
 	}
 
 	/**
 	 * Initialize VAD model
+	 * @param basePath - Base path for model files (optional, uses CDN by default)
 	 */
-	async initialize(modelPath?: string): Promise<void> {
-		if (!modelPath) {
-			// Default model path
-			modelPath = path.join(__dirname, '../../models/silero_vad.onnx');
-		}
-
+	async initialize(basePath?: string): Promise<void> {
 		try {
-			this.session = await ort.InferenceSession.create(modelPath);
-			console.log('Silero VAD model loaded successfully');
+			// VAD configuration parameters
+			// Converting from frame-based to ms-based as per latest API
+			this.vad = await NonRealTimeVAD.new({
+				positiveSpeechThreshold: this.config.threshold,
+				negativeSpeechThreshold: this.config.threshold - 0.15,
+				redemptionMs: this.config.minSilenceDurationMs,
+				preSpeechPadMs: this.config.speechPadMs,
+				minSpeechMs: this.config.minSilenceDurationMs,
+				submitUserSpeechOnPause: false,
+			});
+			this.isInitialized = true;
+			console.log('Web-based VAD model loaded successfully');
 		} catch (error) {
 			throw new Error(`Failed to load VAD model: ${error}`);
 		}
@@ -108,136 +86,53 @@ export class VadDetector {
 	 * Process audio buffer and detect speech segments
 	 */
 	async processAudio(audioBuffer: Float32Array): Promise<VadSegment[]> {
-		if (!this.session) {
+		if (!this.vad || !this.isInitialized) {
 			throw new Error('VAD model not initialized. Call initialize() first.');
 		}
 
 		const segments: VadSegment[] = [];
-		const numFrames = Math.floor(audioBuffer.length / this.frameSizeSamples);
 
-		for (let i = 0; i < numFrames; i++) {
-			const frameStart = i * this.frameSizeSamples;
-			const frameEnd = frameStart + this.frameSizeSamples;
-			const frame = audioBuffer.slice(frameStart, frameEnd);
+		try {
+			// Use NonRealTimeVAD.run() which returns an async iterator
+			for await (const { start, end } of this.vad.run(
+				audioBuffer,
+				this.config.sampleRate
+			)) {
+				// Convert milliseconds to seconds
+				const startSeconds = start / 1000;
+				const endSeconds = end / 1000;
 
-			const currentTime = frameStart / this.config.sampleRate;
+				// Apply speech padding
+				const paddedStart = Math.max(0, startSeconds - (this.config.speechPadMs / 1000));
+				const paddedEnd = endSeconds;
 
-			// Run VAD inference
-			const probability = await this.detectVoice(frame);
-
-			// Determine threshold with hysteresis (as per Lightning implementation)
-			const effectiveThreshold = this.isSpeaking
-				? this.config.threshold - 0.15
-				: this.config.threshold;
-
-			if (probability >= effectiveThreshold) {
-				// Voice detected
-				if (!this.isSpeaking) {
-					// Speech started
-					this.isSpeaking = true;
-					this.speechStartTime = Math.max(
-						0,
-						currentTime - (this.config.speechPadMs / 1000)
-					);
-				}
-				this.silenceStartTime = 0; // Reset silence timer
-			} else {
-				// Silence detected
-				if (this.isSpeaking) {
-					if (this.silenceStartTime === 0) {
-						this.silenceStartTime = currentTime;
-					}
-
-					const silenceDuration = currentTime - this.silenceStartTime;
-					if (silenceDuration >= (this.config.minSilenceDurationMs / 1000)) {
-						// Speech ended
-						segments.push({
-							start: this.speechStartTime,
-							end: this.silenceStartTime,
-							confidence: probability
-						});
-
-						this.isSpeaking = false;
-						this.silenceStartTime = 0;
-					}
+				// Filter segments based on minimum silence duration
+				// (The library handles this internally, but we can add extra filtering if needed)
+				const duration = endSeconds - startSeconds;
+				if (duration * 1000 >= this.config.minSilenceDurationMs) {
+					segments.push({
+						start: paddedStart,
+						end: paddedEnd,
+						confidence: 1.0 // @ricky0123/vad-web doesn't provide confidence scores
+					});
 				}
 			}
-
-			this.lastProcessedTime = currentTime;
+		} catch (error) {
+			console.error('VAD processing error:', error);
+			throw new Error(`VAD processing failed: ${error}`);
 		}
 
 		return segments;
 	}
 
 	/**
-	 * Detect voice in a single frame
-	 * Returns probability (0-1)
-	 */
-	private async detectVoice(frame: Float32Array): Promise<number> {
-		if (!this.session) {
-			throw new Error('VAD model not initialized');
-		}
-
-		// Prepare input: concatenate context + frame
-		const inputLength = this.CONTEXT_SIZE + this.frameSizeSamples;
-		const inputArray = new Float32Array(inputLength);
-		inputArray.set(this.context, 0);
-		inputArray.set(frame, this.CONTEXT_SIZE);
-
-		// Create input tensors
-		const inputTensor = new ort.Tensor('float32', inputArray, [1, inputLength]);
-		const stateTensor = new ort.Tensor('float32', this.hiddenState, [2, 1, 128]);
-		const srTensor = new ort.Tensor('int64', BigInt64Array.from([BigInt(this.config.sampleRate)]), [1]);
-
-		// Run inference
-		const feeds = {
-			'input': inputTensor,
-			'state': stateTensor,
-			'sr': srTensor
-		};
-
-		const results = await this.session.run(feeds);
-
-		// Extract outputs
-		const probability = (results.output as ort.Tensor).data[0] as number;
-		const newState = results.stateN as ort.Tensor;
-
-		// Update hidden state
-		this.hiddenState = new Float32Array(newState.data as Float32Array);
-
-		// Update context (last 64 samples of frame)
-		if (frame.length >= this.CONTEXT_SIZE) {
-			this.context = frame.slice(-this.CONTEXT_SIZE);
-		} else {
-			// Shift context and append frame
-			const newContext = new Float32Array(this.CONTEXT_SIZE);
-			newContext.set(this.context.slice(frame.length), 0);
-			newContext.set(frame, this.CONTEXT_SIZE - frame.length);
-			this.context = newContext;
-		}
-
-		return probability;
-	}
-
-	/**
 	 * Finalize processing and return any pending segment
+	 * Note: @ricky0123/vad-web handles this automatically,
+	 * so this method is kept for interface compatibility
 	 */
 	finalize(): VadSegment | null {
-		if (this.isSpeaking) {
-			const segment: VadSegment = {
-				start: this.speechStartTime,
-				end: this.lastProcessedTime,
-				confidence: 1.0 // Assuming high confidence for ongoing speech
-			};
-
-			// Reset state
-			this.isSpeaking = false;
-			this.speechStartTime = 0;
-			this.silenceStartTime = 0;
-
-			return segment;
-		}
-
+		// The web-based VAD automatically finalizes segments
+		// This method is kept for API compatibility
 		return null;
 	}
 
@@ -245,21 +140,20 @@ export class VadDetector {
 	 * Reset internal state
 	 */
 	reset(): void {
-		this.hiddenState.fill(0);
-		this.context.fill(0);
-		this.isSpeaking = false;
-		this.speechStartTime = 0;
-		this.silenceStartTime = 0;
-		this.lastProcessedTime = 0;
+		// The web-based VAD doesn't maintain external state
+		// Each processAudio() call is independent
+		// This method is kept for API compatibility
 	}
 
 	/**
 	 * Cleanup resources
 	 */
 	async dispose(): Promise<void> {
-		if (this.session) {
-			// ONNX Runtime sessions don't have explicit disposal in Node.js
-			this.session = null;
+		if (this.vad) {
+			// Check if the VAD instance has a dispose or cleanup method
+			// @ricky0123/vad-web may or may not have explicit cleanup
+			this.vad = null;
+			this.isInitialized = false;
 		}
 	}
 }

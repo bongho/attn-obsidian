@@ -7,6 +7,7 @@ import { TemplateProcessor } from './templateProcessor';
 import { ConfigLoader } from './configLoader';
 import { AudioProcessor } from './audioProcessor';
 import { TemplateLoader } from './templateLoader';
+import { join } from 'path';
 
 const DEFAULT_SETTINGS: ATTNSettings = {
   openaiApiKey: '', // Legacy field for backward compatibility
@@ -115,9 +116,21 @@ export default class ATTNPlugin extends Plugin {
   private configLoader: ConfigLoader;
   mlxBridge?: import('./utils/mlxBridge').MlxBridge;
 
+  /**
+   * Get the path to MLX bridge Python script in plugin directory
+   */
+  getMlxBridgeScriptPath(): string {
+    const adapter = this.app.vault.adapter as any;
+    const pluginDir = join(adapter.basePath, '.obsidian', 'plugins', this.manifest.id);
+    return join(pluginDir, 'python', 'mlx_whisper_bridge.py');
+  }
+
   async onload() {
     this.configLoader = ConfigLoader.getInstance();
     await this.loadSettings();
+
+    // Set runtime paths for MLX bridge
+    this.settings._mlxBridgeScriptPath = this.getMlxBridgeScriptPath();
 
     this.addSettingTab(new ATTNSettingTab(this.app, this));
 

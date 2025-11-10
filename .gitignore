@@ -47,3 +47,9 @@ pids
 *.pid
 *.seed
 *.pid.lockpython/whisper.cpp/
+
+# VAD model files (copied during build)
+vad.worklet.bundle.min.js
+silero_vad*.onnx
+ort-*.wasm
+ort-*.mjs
