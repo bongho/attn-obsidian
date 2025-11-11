@@ -26,6 +26,41 @@ export class LocalMlxWhisperProvider implements SpeechToTextProvider {
   }
 
   /**
+   * Convert OpenAI model name to MLX model name
+   */
+  private convertToMlxModelName(model?: string): string {
+    // Use mlxSelectedModel from settings first
+    if (this.settings.mlxSelectedModel) {
+      return `mlx-community/whisper-${this.settings.mlxSelectedModel}-mlx`;
+    }
+
+    // If no model specified, use medium as default
+    if (!model) {
+      return 'mlx-community/whisper-medium-mlx';
+    }
+
+    // If already in MLX format, return as is
+    if (model.includes('mlx-community/whisper-')) {
+      return model;
+    }
+
+    // Convert OpenAI model names to MLX equivalents
+    // whisper-1 -> medium, gpt-4 -> ignore (not a whisper model)
+    if (model === 'whisper-1' || model === 'whisper') {
+      return 'mlx-community/whisper-medium-mlx';
+    }
+
+    // If it looks like a size name, use it directly
+    const sizeMatch = model.match(/^(tiny|base|small|medium|large|large-v2|large-v3)$/i);
+    if (sizeMatch) {
+      return `mlx-community/whisper-${sizeMatch[1].toLowerCase()}-mlx`;
+    }
+
+    // Default fallback
+    return 'mlx-community/whisper-medium-mlx';
+  }
+
+  /**
    * Initialize MLX bridge (lazy initialization)
    */
   private async initialize(): Promise<void> {
@@ -71,8 +106,8 @@ export class LocalMlxWhisperProvider implements SpeechToTextProvider {
           await this.mlxBridge.initialize();
         }
 
-        // Optionally preload model
-        const modelName = this.settings.model || 'mlx-community/whisper-large-v3-mlx';
+        // Optionally preload model (convert to MLX format)
+        const modelName = this.convertToMlxModelName(this.settings.model);
         console.log(`Preloading MLX Whisper model: ${modelName}...`);
         await this.mlxBridge.loadModel(modelName);
 
@@ -114,12 +149,13 @@ export class LocalMlxWhisperProvider implements SpeechToTextProvider {
       // Save input to temporary file (Python bridge needs file path)
       tempFilePath = await this.saveToTempFile(input);
 
-      // Prepare transcription options
+      // Prepare transcription options (convert model name to MLX format)
+      const mlxModelName = this.convertToMlxModelName(options.model || this.settings.model);
       const transcribeOptions = {
-        model: options.model || this.settings.model || 'mlx-community/whisper-large-v3-mlx',
+        model: mlxModelName,
         language: options.language || this.settings.language,
         prompt: options.prompt,
-        use_coreml: true // Enable CoreML encoder for 18x speedup
+        use_coreml: this.settings.mlxUseCoreml !== false // Enable CoreML if not explicitly disabled
       };
 
       console.log(`Transcribing with MLX Whisper (${transcribeOptions.model})...`);
