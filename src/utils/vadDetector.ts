@@ -8,7 +8,8 @@
  * - Compatible with original vadDetector interface
  */
 
-import { NonRealTimeVAD } from '@ricky0123/vad-web';
+// Dynamic import to make VAD optional
+type NonRealTimeVAD = any;
 
 export interface VadConfig {
 	/** Sample rate (8000 or 16000 Hz only) */
@@ -65,9 +66,18 @@ export class VadDetector {
 	 */
 	async initialize(basePath?: string): Promise<void> {
 		try {
+			// Try to dynamically import VAD module (optional dependency)
+			const vadModule = await import('@ricky0123/vad-web').catch(() => null);
+
+			if (!vadModule) {
+				console.warn('VAD module (@ricky0123/vad-web) not available. VAD features disabled.');
+				this.isInitialized = false;
+				return;
+			}
+
 			// VAD configuration parameters
 			// Converting from frame-based to ms-based as per latest API
-			this.vad = await NonRealTimeVAD.new({
+			this.vad = await vadModule.NonRealTimeVAD.new({
 				positiveSpeechThreshold: this.config.threshold,
 				negativeSpeechThreshold: this.config.threshold - 0.15,
 				redemptionMs: this.config.minSilenceDurationMs,
@@ -78,7 +88,9 @@ export class VadDetector {
 			this.isInitialized = true;
 			console.log('Web-based VAD model loaded successfully');
 		} catch (error) {
-			throw new Error(`Failed to load VAD model: ${error}`);
+			console.warn('Failed to load VAD model. VAD features will be disabled:', error);
+			this.isInitialized = false;
+			this.vad = null;
 		}
 	}
 
@@ -87,7 +99,8 @@ export class VadDetector {
 	 */
 	async processAudio(audioBuffer: Float32Array): Promise<VadSegment[]> {
 		if (!this.vad || !this.isInitialized) {
-			throw new Error('VAD model not initialized. Call initialize() first.');
+			console.warn('VAD model not initialized. Returning empty segments.');
+			return [];
 		}
 
 		const segments: VadSegment[] = [];
