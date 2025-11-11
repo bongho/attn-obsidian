@@ -58,8 +58,9 @@ export class LocalMlxWhisperProvider implements SpeechToTextProvider {
           );
         }
 
-        // Initialize bridge
-        const pythonPath = envStatus.pythonPath || 'python3';
+        // Initialize bridge (use mlxPythonPath from settings first)
+        const pythonPath = this.settings.mlxPythonPath || envStatus.pythonPath || 'python3';
+        console.log(`Using Python path: ${pythonPath}`);
         this.mlxBridge = new MlxBridge(pythonPath, this.bridgeScriptPath);
         await this.mlxBridge.initialize();
 

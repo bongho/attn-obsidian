@@ -107,6 +107,7 @@ const context = await esbuild.context({
 		'@lezer/common',
 		'@lezer/highlight',
 		'@lezer/lr',
+		'@ricky0123/vad-web',
 		...builtins],
 	format: 'cjs',
 	target: 'es2020',
