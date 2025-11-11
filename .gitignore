@@ -46,7 +46,8 @@ full-workflow-test.mjs
 pids
 *.pid
 *.seed
-*.pid.lockpython/whisper.cpp/
+*.pid.lock
+python/whisper.cpp/
 
 # VAD model files (copied during build)
 vad.worklet.bundle.min.js
