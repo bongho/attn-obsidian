@@ -23,6 +23,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+# Ensure ffmpeg is accessible by adding common Homebrew paths to PATH
+# This is needed because mlx-whisper uses ffmpeg internally for audio decoding
+homebrew_paths = ['/opt/homebrew/bin', '/usr/local/bin']
+current_path = os.environ.get('PATH', '')
+for brew_path in homebrew_paths:
+    if brew_path not in current_path and os.path.exists(brew_path):
+        os.environ['PATH'] = f"{brew_path}:{current_path}"
+        current_path = os.environ['PATH']
+        print(f"Added {brew_path} to PATH for ffmpeg access", file=sys.stderr)
+
 try:
     import mlx_whisper
 except ImportError:
