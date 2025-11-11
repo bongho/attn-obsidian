@@ -40,29 +40,36 @@ export class LocalMlxWhisperProvider implements SpeechToTextProvider {
 
     this.initPromise = (async () => {
       try {
-        // Check environment
-        const envStatus = await this.envChecker.checkEnvironment();
+        // If mlxPythonPath is configured, use it directly without environment check
+        if (this.settings.mlxPythonPath) {
+          console.log(`Using configured Python path: ${this.settings.mlxPythonPath}`);
+          this.mlxBridge = new MlxBridge(this.settings.mlxPythonPath, this.bridgeScriptPath);
+          await this.mlxBridge.initialize();
+        } else {
+          // Check environment and auto-detect Python
+          const envStatus = await this.envChecker.checkEnvironment();
 
-        if (!envStatus.pythonAvailable) {
-          throw new Error('Python 3.9+ is required for local MLX transcription');
+          if (!envStatus.pythonAvailable) {
+            throw new Error('Python 3.9+ is required for local MLX transcription');
+          }
+
+          if (!envStatus.applesilicon) {
+            throw new Error('MLX requires Apple Silicon (M1/M2/M3). Please use API-based providers.');
+          }
+
+          if (!envStatus.mlxWhisperAvailable) {
+            throw new Error(
+              'mlx-whisper is not installed. ' +
+              'Please install it by running: pip3 install mlx-whisper'
+            );
+          }
+
+          // Initialize bridge with detected Python
+          const pythonPath = envStatus.pythonPath || 'python3';
+          console.log(`Using detected Python path: ${pythonPath}`);
+          this.mlxBridge = new MlxBridge(pythonPath, this.bridgeScriptPath);
+          await this.mlxBridge.initialize();
         }
-
-        if (!envStatus.applesilicon) {
-          throw new Error('MLX requires Apple Silicon (M1/M2/M3). Please use API-based providers.');
-        }
-
-        if (!envStatus.mlxWhisperAvailable) {
-          throw new Error(
-            'mlx-whisper is not installed. ' +
-            'Please install it by running: pip3 install mlx-whisper'
-          );
-        }
-
-        // Initialize bridge (use mlxPythonPath from settings first)
-        const pythonPath = this.settings.mlxPythonPath || envStatus.pythonPath || 'python3';
-        console.log(`Using Python path: ${pythonPath}`);
-        this.mlxBridge = new MlxBridge(pythonPath, this.bridgeScriptPath);
-        await this.mlxBridge.initialize();
 
         // Optionally preload model
         const modelName = this.settings.model || 'mlx-community/whisper-large-v3-mlx';
