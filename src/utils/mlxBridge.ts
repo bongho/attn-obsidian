@@ -132,9 +132,12 @@ export class MlxBridge {
           bridgeScriptPath: this.bridgeScriptPath
         });
 
-        // Spawn Python process
+        // Spawn Python process with system environment (including PATH for ffmpeg)
         this.process = spawn(this.pythonPath, [this.bridgeScriptPath], {
-          stdio: ['pipe', 'pipe', 'pipe']
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: {
+            ...process.env  // Include all system environment variables (PATH, etc.)
+          }
         });
 
         console.log('MLX Bridge: Process spawned, PID:', this.process.pid);

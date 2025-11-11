@@ -67,6 +67,7 @@ export class VadDetector {
 	async initialize(basePath?: string): Promise<void> {
 		try {
 			// Try to dynamically import VAD module (optional dependency)
+			// @ts-ignore - Optional dependency, may not be installed
 			const vadModule = await import('@ricky0123/vad-web').catch(() => null);
 
 			if (!vadModule) {
