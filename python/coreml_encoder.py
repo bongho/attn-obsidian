@@ -7,6 +7,7 @@ for 3-18x faster encoding on Apple Silicon (M1/M2/M3).
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Union
 import numpy as np
@@ -16,7 +17,7 @@ try:
     COREML_AVAILABLE = True
 except ImportError:
     COREML_AVAILABLE = False
-    print("Warning: coremltools not available. CoreML encoder will not work.")
+    print("Warning: coremltools not available. CoreML encoder will not work.", file=sys.stderr)
 
 try:
     import mlx.core as mx
